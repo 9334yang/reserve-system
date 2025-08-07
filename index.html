@@ -1,10 +1,165 @@
 <!DOCTYPE html>
 <html lang="zh-Hant">
-<head>
-  <meta charset="UTF-8" />
-  <title>預約系統</title>
-</head>
-<body>
-  <h1>預約網站上線成功</h1>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>預約系統</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        background-color: #f7f7f7;
+        padding: 2rem;
+        text-align: center;
+      }
+      h1 {
+        font-size: 24px;
+        margin-bottom: 1.5rem;
+      }
+      .step {
+        display: none;
+      }
+      .active {
+        display: block;
+      }
+      .options {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 1rem;
+      }
+      .option {
+        border: 2px solid #999;
+        padding: 1rem 2rem;
+        border-radius: 20px;
+        cursor: pointer;
+        background-color: white;
+        transition: all 0.2s;
+      }
+      .option.selected {
+        border-color: #007bff;
+        background-color: #e0f0ff;
+      }
+      button {
+        margin-top: 2rem;
+        padding: 0.5rem 1rem;
+        font-size: 16px;
+        border: none;
+        border-radius: 10px;
+        background-color: #007bff;
+        color: white;
+        cursor: pointer;
+      }
+      button:disabled {
+        background-color: #999;
+        cursor: not-allowed;
+      }
+      .timeslot {
+        display: inline-block;
+        margin: 0.5rem;
+        padding: 0.8rem 1.5rem;
+        border-radius: 20px;
+        border: 2px solid #ccc;
+        background-color: white;
+        cursor: pointer;
+      }
+      .timeslot.selected {
+        border-color: #28a745;
+        background-color: #d4edda;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>請選擇預約項目</h1>
+
+    <div class="step step-1 active">
+      <div class="options">
+        <div class="option" data-value="物理">物理</div>
+        <div class="option" data-value="健身">健身</div>
+        <div class="option" data-value="優養">優養</div>
+      </div>
+      <button id="nextBtn1" disabled>下一步：選擇時間</button>
+    </div>
+
+    <div class="step step-2">
+      <h1>請選擇預約時間</h1>
+      <div id="timeslotContainer"></div>
+      <button id="nextBtn2" disabled>下一步：送出預約</button>
+    </div>
+
+    <div class="step step-3">
+      <h1>預約完成 ✅</h1>
+      <p>您已成功送出預約，請稍候 LINE 通知。</p>
+    </div>
+
+    <script>
+      const options = document.querySelectorAll(".option");
+      const nextBtn1 = document.getElementById("nextBtn1");
+      const nextBtn2 = document.getElementById("nextBtn2");
+      const step1 = document.querySelector(".step-1");
+      const step2 = document.querySelector(".step-2");
+      const step3 = document.querySelector(".step-3");
+      const timeslotContainer = document.getElementById("timeslotContainer");
+
+      let selectedOptions = [];
+      let selectedTime = "";
+
+      options.forEach(option => {
+        option.addEventListener("click", () => {
+          option.classList.toggle("selected");
+          const value = option.dataset.value;
+          if (selectedOptions.includes(value)) {
+            selectedOptions = selectedOptions.filter(v => v !== value);
+          } else {
+            selectedOptions.push(value);
+          }
+          nextBtn1.disabled = selectedOptions.length === 0;
+        });
+      });
+
+      nextBtn1.addEventListener("click", () => {
+        step1.classList.remove("active");
+        step2.classList.add("active");
+        generateTimeslots();
+      });
+
+      function generateTimeslots() {
+        timeslotContainer.innerHTML = "";
+        const startHour = 9;
+        const endHour = 22;
+        for (let h = startHour; h < endHour; h++) {
+          const time = `${h.toString().padStart(2, '0')}:00~${(h+1).toString().padStart(2, '0')}:00`;
+          const div = document.createElement("div");
+          div.classList.add("timeslot");
+          div.innerText = time;
+          div.dataset.time = time;
+          div.onclick = () => {
+            document.querySelectorAll(".timeslot").forEach(el => el.classList.remove("selected"));
+            div.classList.add("selected");
+            selectedTime = time;
+            nextBtn2.disabled = false;
+          };
+          timeslotContainer.appendChild(div);
+        }
+      }
+
+      nextBtn2.addEventListener("click", () => {
+        const payload = {
+          services: selectedOptions,
+          time: selectedTime,
+          date: new Date().toISOString().slice(0, 10),
+        };
+        fetch("https://script.google.com/macros/s/AKfycbxvoR6NlUgP28lNZne3y8QWdRE2HaljG1LfMTROaqrIq7F99lfIGeZHkb5LcdRxuJtFYA/exec", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        })
+          .then(() => {
+            step2.classList.remove("active");
+            step3.classList.add("active");
+          });
+      });
+    </script>
+  </body>
 </html>
