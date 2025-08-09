@@ -5,88 +5,24 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>預約系統</title>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      background-color: #f7f7f7;
-      padding: 2rem;
-      text-align: center;
-    }
-    h1 {
-      font-size: 24px;
-      margin-bottom: 1.5rem;
-    }
-    .step {
-      display: none;
-    }
-    .active {
-      display: block;
-    }
-    .options {
-      display: flex;
-      justify-content: center;
-      flex-wrap: wrap;
-      gap: 1rem;
-    }
-    .option {
-      border: 2px solid #999;
-      padding: 1rem 2rem;
-      border-radius: 20px;
-      cursor: pointer;
-      background-color: white;
-      transition: all 0.2s;
-    }
-    .option.selected {
-      border-color: #007bff;
-      background-color: #e0f0ff;
-    }
-    .option.disabled {
-      border-color: #ccc;
-      background-color: #eee;
-      color: #888;
-      cursor: not-allowed;
-    }
-    button {
-      margin-top: 2rem;
-      padding: 0.5rem 1rem;
-      font-size: 16px;
-      border: none;
-      border-radius: 10px;
-      background-color: #007bff;
-      color: white;
-      cursor: pointer;
-    }
-    button:disabled {
-      background-color: #999;
-      cursor: not-allowed;
-    }
-    .timeslot {
-      display: inline-block;
-      margin: 0.5rem;
-      padding: 0.8rem 1.5rem;
-      border-radius: 20px;
-      border: 2px solid #ccc;
-      background-color: white;
-      cursor: pointer;
-    }
-    .timeslot.selected {
-      border-color: #28a745;
-      background-color: #d4edda;
-    }
-    .timeslot.disabled {
-      border-color: #ccc;
-      background-color: #eee;
-      color: #888;
-      cursor: not-allowed;
-    }
-    input[type="date"] {
-      padding: 0.5rem;
-      font-size: 16px;
-      border: 2px solid #ccc;
-      border-radius: 8px;
-    }
+    body { font-family: Arial, sans-serif; background-color: #f7f7f7; padding: 2rem; text-align: center; }
+    h1 { font-size: 24px; margin-bottom: 1.5rem; }
+    .step { display: none; }
+    .active { display: block; }
+    .options { display: flex; justify-content: center; flex-wrap: wrap; gap: 1rem; }
+    .option { border: 2px solid #999; padding: 1rem 2rem; border-radius: 20px; cursor: pointer; background-color: white; transition: all 0.2s; }
+    .option.selected { border-color: #007bff; background-color: #e0f0ff; }
+    .option.disabled { border-color: #ccc; background-color: #eee; color: #888; cursor: not-allowed; }
+    button { margin-top: 2rem; padding: 0.5rem 1rem; font-size: 16px; border: none; border-radius: 10px; background-color: #007bff; color: white; cursor: pointer; }
+    button:disabled { background-color: #999; cursor: not-allowed; }
+    .timeslot { display: inline-block; margin: 0.5rem; padding: 0.8rem 1.5rem; border-radius: 20px; border: 2px solid #ccc; background-color: white; cursor: pointer; }
+    .timeslot.selected { border-color: #28a745; background-color: #d4edda; }
+    .timeslot.disabled { border-color: #ccc; background-color: #eee; color: #888; cursor: not-allowed; }
+    input[type="date"] { padding: 0.5rem; font-size: 16px; border: 2px solid #ccc; border-radius: 8px; }
   </style>
 </head>
 <body>
+  <!-- Step 1 -->
   <div class="step step-1 active">
     <h1>請選擇預約項目</h1>
     <div class="options">
@@ -97,6 +33,7 @@
     <button id="nextBtn1" disabled>下一步：選擇日期</button>
   </div>
 
+  <!-- Step 2 -->
   <div class="step step-2">
     <h1>請選擇日期</h1>
     <input type="date" id="datePicker" min="">
@@ -106,20 +43,24 @@
     </div>
   </div>
 
+  <!-- Step 3 -->
   <div class="step step-3">
     <h1>請選擇預約時間</h1>
     <div id="timeslotContainer"></div>
     <div>
       <button id="prevBtn2">返回</button>
-      <button id="nextBtn3" disabled>下一步：送出預約</button>
+      <button id="nextBtn3" disabled>送出預約</button>
     </div>
   </div>
 
+  <!-- Step 4 -->
   <div class="step step-4">
     <h1>預約完成 ✅</h1>
     <p>您已成功送出預約，請稍候 LINE 通知。</p>
   </div>
 
+  <!-- LIFF SDK -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script>
     const options = document.querySelectorAll(".option");
     const nextBtn1 = document.getElementById("nextBtn1");
@@ -137,8 +78,19 @@
     let selectedOptions = [];
     let selectedDate = "";
     let selectedTime = "";
+    let userId = "";
+    let displayName = "";
 
-    // 限制日期選擇範圍：今天+7天 到 半年內
+    // 初始化 LIFF
+    liff.init({ liffId: "你的-LIFF-ID" })
+      .then(() => liff.getProfile())
+      .then(profile => {
+        userId = profile.userId;
+        displayName = profile.displayName;
+      })
+      .catch(err => alert("LIFF 初始化失敗：" + err));
+
+    // 限制日期範圍
     const today = new Date();
     const minDate = new Date(today);
     minDate.setDate(minDate.getDate() + 7);
@@ -204,10 +156,9 @@
         div.innerText = time;
         div.dataset.time = time;
 
-        // 模擬已滿額
+        // 這裡先模擬滿額
         if (Math.random() < 0.3) {
           div.classList.add("disabled");
-          div.onclick = null;
         } else {
           div.onclick = () => {
             document.querySelectorAll(".timeslot").forEach(el => el.classList.remove("selected"));
@@ -223,20 +174,25 @@
     // 送出預約
     nextBtn3.addEventListener("click", () => {
       const payload = {
-        services: selectedOptions,
-        date: selectedDate,
-        time: selectedTime,
+        userId: userId,
+        displayName: displayName,
+        date: selectedDate.replace(/-/g, "/"),
+        timeSlots: [selectedTime],
+        services: selectedOptions
       };
+
       fetch("https://script.google.com/macros/s/AKfycbxvoR6NlUgP28lNZne3y8QWdRE2HaljG1LfMTROaqrIq7F99lfIGeZHkb5LcdRxuJtFYA/exec", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
-      }).then(() => {
+      })
+      .then(res => res.text())
+      .then(text => {
+        alert(text);
         step3.classList.remove("active");
         step4.classList.add("active");
-      });
+      })
+      .catch(err => alert("送出失敗：" + err));
     });
   </script>
 </body>
