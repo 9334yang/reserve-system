@@ -83,13 +83,23 @@
 
     // 初始化 LIFF
     liff.init({ liffId: "2007686418-Gy0woWJ2" })
-      .then(() => liff.getProfile())
-      .then(profile => {
-        userId = profile.userId;
-        displayName = profile.displayName;
-      })
-      .catch(err => alert("LIFF 初始化失敗：" + err));
+      .then(() => {
+    if (!liff.isLoggedIn()) {
+      liff.login(); // 沒登入就跳 LINE 登入
+    } else {
+      // 已登入才可呼叫 API
+      startApp();
+    }
+  })
+  .catch((err) => {
+    console.error('LIFF 初始化失敗', err);
+  });
 
+function startApp() {
+  liff.getProfile().then(profile => {
+    console.log(profile);
+  });
+}
     // 限制日期範圍
     const today = new Date();
     const minDate = new Date(today);
@@ -197,6 +207,7 @@
   </script>
 </body>
 </html>
+
 
 
 
