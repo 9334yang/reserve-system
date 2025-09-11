@@ -1,150 +1,267 @@
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>LIFF 除錯工具 (ES5)</title>
-  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>預約系統</title>
   <style>
-    body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans TC",Arial;padding:16px}
-    pre{background:#fafafa;border:1px solid #eee;border-radius:10px;padding:10px;white-space:pre-wrap;word-break:break-word}
-    .row{margin:12px 0}.ok{color:green;font-weight:600}.bad{color:#b00020;font-weight:600}
-    .btn{padding:8px 12px;border:1px solid #ddd;border-radius:10px;background:#fff;margin-right:8px}
+    body { font-family: Arial, sans-serif; background:#f7f7f7; padding:2rem; text-align:center; }
+    h1 { font-size:24px; margin-bottom:1.5rem; }
+    .step { display:none; } .active{ display:block; }
+    .status { margin:0 auto 1rem; max-width:680px; text-align:left; white-space:pre-wrap; color:#444; }
+    .status b{color:#111;}
+    .options { display:flex; justify-content:center; flex-wrap:wrap; gap:1rem; }
+    .option {
+      position: relative;
+      border:2px solid #999; padding:1rem 2rem; border-radius:20px;
+      cursor:pointer; background:#fff; min-width:96px;
+      transition: transform .08s ease, border-color .08s ease, background .08s ease;
+    }
+    .option:active { transform: scale(0.98); }
+    .option.selected { border-color:#007bff; background:#e0f0ff; }
+    .order-badge {
+      position:absolute; top:-8px; right:-8px;
+      width:28px; height:28px; border-radius:9999px;
+      display:flex; align-items:center; justify-content:center;
+      font-size:14px; font-weight:700; color:#fff; background:#007bff;
+      box-shadow:0 2px 6px rgba(0,0,0,.15);
+      pointer-events:none;
+    }
+    .timeslot { display:inline-block; margin:.5rem; padding:.8rem 1.5rem; border-radius:20px; border:2px solid #ccc; background:#fff; cursor:pointer; }
+    .timeslot.selected { border-color:#28a745; background:#d4edda; }
+    button { margin-top:2rem; padding:.5rem 1rem; font-size:16px; border:0; border-radius:10px; background:#007bff; color:#fff; }
+    button:disabled { background:#999; }
+    .err { color:#b00020; }
+    .ok { color:#137333; }
   </style>
 </head>
 <body>
-  <h1>LIFF 除錯工具</h1>
-  <h3 style="color:red">BUILD: GAS-ES5</h3>
+  <div class="status" id="status">初始化中…</div>
 
-  <div class="row">
-    <button id="btnOpenLiffUrl" class="btn">用 LIFF URL 開啟</button>
-    <button id="btnLogin" class="btn">強制登入</button>
-    <button id="btnLogout" class="btn">登出</button>
-    <button id="btnReload" class="btn">重新整理</button>
+  <!-- Step 1 -->
+  <div class="step step-1 active">
+    <h1>請選擇預約項目（會依點擊順序標號）</h1>
+    <div class="options">
+      <div class="option" data-value="物理">物理</div>
+      <div class="option" data-value="健身">健身</div>
+      <div class="option" data-value="優氧">優氧</div>
+    </div>
+    <button id="nextBtn1" disabled>下一步：選擇日期</button>
   </div>
 
-  <div class="row"><b>步驟日誌</b><pre id="log">開始載入頁面…</pre></div>
-  <div class="row"><b>目前頁面來源 / 網域</b><pre id="origin">（尚未取得）</pre></div>
-  <div class="row"><b>環境</b><pre id="env">（尚未取得）</pre></div>
-  <div class="row"><b>getProfile()</b><pre id="profile">（尚未取得）</pre></div>
-  <div class="row"><b>getDecodedIDToken()</b><pre id="idtoken">（尚未取得）</pre></div>
-  <div class="row"><b>寫入結果</b><pre id="write">（尚未傳送）</pre></div>
-  <div class="row"><b>判斷</b><pre id="judge">（尚未判斷）</pre></div>
+  <!-- Step 2 -->
+  <div class="step step-2">
+    <h1>請選擇日期</h1>
+    <input type="date" id="datePicker" min="">
+    <div>
+      <button id="prevBtn1">返回</button>
+      <button id="nextBtn2" disabled>下一步：選擇時間</button>
+    </div>
+  </div>
 
-<script>
-/* ===== 需要你替換的兩個常數 ===== */
-var LIFF_ID = "2007686418-Gy0woWJ2";   /* 你的 LIFF ID */
-var GAS_URL = "https://script.google.com/macros/s/AKfycbyPZooMVHR-vbayrsmyQWFtYUFoo9R7McYe-8M9pxi7qMiUlzP8tadLe1rUZ35IMive/exec"; /* 這個專案的 exec */
+  <!-- Step 3 -->
+  <div class="step step-3">
+    <h1>請選擇預約時間</h1>
+    <div id="timeslotContainer"></div>
+    <div>
+      <button id="prevBtn2">返回</button>
+      <button id="nextBtn3" disabled>送出預約</button>
+    </div>
+  </div>
 
-/* ===== 工具 / 錯誤攔截 ===== */
-function $(id){ return document.getElementById(id); }
-function log(m){ $('log').textContent += "\n" + m; }
-window.onerror = function(msg, src, line, col, err){
-  var stack = (err && err.stack) ? err.stack : "";
-  log("❌ onerror: " + msg + " @ " + src + ":" + line + ":" + col + "\n" + stack);
-  $('judge').textContent = "❌ 頁面 JS 錯誤（見步驟日誌）";
-};
-window.onunhandledrejection = function(ev){
-  var e = ev && ev.reason ? ev.reason : ev;
-  log("❌ Unhandled Rejection: " + (e && e.message ? e.message : e));
-};
-log("✅ HTML 已載入 @ " + new Date().toLocaleString());
+  <!-- Step 4 -->
+  <div class="step step-4">
+    <h1>預約完成 ✅</h1>
+    <p>您已成功送出預約，請稍候 LINE 通知。</p>
+  </div>
 
-/* ===== 主流程 ===== */
-(function(){
-  try {
-    $('origin').textContent = JSON.stringify({
-      href: location.href, origin: location.origin, host: location.host,
-      hostname: location.hostname, protocol: location.protocol
-    }, null, 2);
+  <!-- LIFF SDK -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script>
+    // ======= 設定區 =======
+    const LIFF_ID = '2007686418-Gy0woWJ2';         // 你的 LIFF ID
+    const GAS_URL = 'https://script.google.com/macros/s/AKfycbxlsGKWQHmtl9FwBHzNpZvCxu05HJOaHnfKMHZ4fTA6N9150IcBa5T882yqT5P0ropRPQ/exec;
+    // ======================
 
-    log("檢查 window.liff：typeof liff = " + (typeof liff));
-    if (typeof liff === "undefined") {
-      $('judge').textContent = "❌ LIFF SDK 沒載入"; return;
-    }
+    const $ = (sel)=>document.querySelector(sel);
+    const statusEl = $('#status');
 
-    log("呼叫 liff.init()，liffId=" + LIFF_ID);
+    // DOM
+    const step1 = $('.step-1');
+    const step2 = $('.step-2');
+    const step3 = $('.step-3');
+    const step4 = $('.step-4');
+    const optionsEls = document.querySelectorAll('.option');
+    const nextBtn1 = document.getElementById('nextBtn1');
+    const nextBtn2 = document.getElementById('nextBtn2');
+    const nextBtn3 = document.getElementById('nextBtn3');
+    const prevBtn1 = document.getElementById('prevBtn1');
+    const prevBtn2 = document.getElementById('prevBtn2');
+    const datePicker = document.getElementById('datePicker');
+    const timeslotContainer = document.getElementById('timeslotContainer');
 
-    var inited = false;
-    var timer = setTimeout(function(){
-      if (!inited) {
-        log("⏳ liff.init() 逾時");
-        $('judge').textContent =
-          "⏳ liff.init() 逾時：此頁來源與 LIFF Endpoint 可能不一致；請用 LIFF URL 進入，或改用固定網域。";
-      }
-    }, 12000);
+    // 狀態
+    let selectedOptions = []; // 例如 ['物理','優氧']，順序即為點擊順序
+    let selectedDate = '';
+    let selectedTime = '';
+    let userId = '';
+    let displayName = '';
 
-    liff.init({ liffId: LIFF_ID }).then(function(){
-      inited = true; clearTimeout(timer);
-      return (liff.ready && typeof liff.ready.then === 'function') ? liff.ready : Promise.resolve();
-    }).then(function(){
-      var env = {
-        inClient: liff.isInClient(), loggedIn: liff.isLoggedIn(),
-        os: liff.getOS(), lang: liff.getLanguage(), version: liff.getVersion(),
-        lineVersion: (typeof liff.getLineVersion === 'function') ? liff.getLineVersion() : null
-      };
-      $('env').textContent = JSON.stringify(env, null, 2);
-      log("環境就緒：inClient=" + env.inClient + ", loggedIn=" + env.loggedIn);
+    const log = (msg, ok=false, err=false) => {
+      statusEl.innerHTML = (ok?'<b class="ok">✔</b> ': err?'<b class="err">✖</b> ':'') + String(msg);
+    };
+
+    // 1) LIFF 初始化 + 取使用者資料（含備援）
+    (async () => {
+      log('載入 LIFF…');
+      await liff.init({ liffId: LIFF_ID });
 
       if (!liff.isLoggedIn()) {
-        log("未登入 → 觸發 liff.login()");
+        log('尚未登入，導向登入…');
         liff.login({ redirectUri: location.href });
-        return Promise.reject("redirect");
+        return;
       }
 
-      log("呼叫 liff.getProfile()…");
-      return liff.getProfile().then(function(prof){
-        $('profile').textContent = JSON.stringify(prof, null, 2);
-        return prof && prof.userId ? prof.userId : null;
-      }).catch(function(e){
-        $('profile').textContent = "（失敗）\n" + (e && e.message ? e.message : e);
-        return null;
-      });
-    }).then(function(userId){
-      var dec = null;
-      try { dec = liff.getDecodedIDToken && liff.getDecodedIDToken(); } catch(e){}
-      $('idtoken').textContent = dec ? JSON.stringify(dec, null, 2) : "（沒有 decoded ID token，可能沒勾 openid）";
-      if (!userId && dec && dec.sub) userId = dec.sub;
+      await liff.ready;
 
-      var msgs = [];
-      if (!liff.isInClient()) msgs.push("❌ 不在 LINE App 內（請在 LINE 內建瀏覽器打開）");
-      if (userId) msgs.push("✅ 取得 userId：" + userId);
-      if (!userId) msgs.push("❌ 取不到 userId → 檢查 scope profile/openid、或按『用 LIFF URL 開啟』");
-      $('judge').textContent = msgs.join("\n");
-
-      if (!userId) return null;
-
-      return fetch(GAS_URL, {
-        method: "POST",
-        headers: { "Content-Type": "text/plain;charset=utf-8" },
-        body: JSON.stringify({ userId: userId, ts: new Date().toISOString() })
-      }).then(function(res){ return res.json(); }).then(function(data){
-        if (data && data.ok) { $('write').textContent = "✅ 已成功寫入試算表"; $('write').className="ok"; }
-        else { $('write').textContent = "❌ 寫入失敗：" + (data && data.error ? data.error : "未知錯誤"); $('write').className="bad"; }
-      }).catch(function(e){
-        $('write').textContent = "❌ 寫入失敗（fetch 例外）：" + (e && e.message ? e.message : e); $('write').className="bad";
-      });
-    }).catch(function(e){
-      if (e === "redirect") return;
-      log("初始化期間發生錯誤：" + (e && e.message ? e.message : e));
-      $('judge').textContent = "❌ liff.init/流程失敗（見步驟日誌）";
+      try {
+        const prof = await liff.getProfile();
+        userId = prof?.userId || '';
+        displayName = prof?.displayName || '';
+        log('getProfile() 成功，使用者：' + (displayName || '（未取到名稱）'), true);
+      } catch (e) {
+        // 備援：用 decoded ID token
+        const dec = liff.getDecodedIDToken?.();
+        if (dec?.sub) {
+          userId = dec.sub;
+          displayName = dec.name || '';
+          log('getProfile() 失敗，改用 decoded ID token 取得 userId：' + userId, true);
+        } else {
+          log('無法取得使用者資訊，請確認 LIFF scope 已勾選 profile/openid 或重新整理。', false, true);
+        }
+      }
+    })().catch(err => {
+      log('LIFF 初始化失敗：' + (err?.message || err), false, true);
     });
-  } catch (err) {
-    log("初始化 try/catch 例外：" + (err && err.stack ? err.stack : err));
-    $('judge').textContent = "❌ 頁面初始化例外";
-  }
-})();
 
-/* 控制鈕 */
-$('btnOpenLiffUrl').onclick = function(){ location.href = "https://liff.line.me/" + LIFF_ID; };
-$('btnLogin').onclick     = function(){ liff.login({ redirectUri: location.href }); };
-$('btnLogout').onclick    = function(){ liff.logout(); location.reload(); };
-$('btnReload').onclick    = function(){ location.reload(); };
-</script>
+    // 2) 日期限制：今天+7 到 半年內
+    const today = new Date();
+    const minDate = new Date(today); minDate.setDate(minDate.getDate()+7);
+    const maxDate = new Date(today); maxDate.setMonth(maxDate.getMonth()+6);
+    datePicker.min = toDateInput(minDate);
+    datePicker.max = toDateInput(maxDate);
+    function toDateInput(d){
+      const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), dd=String(d.getDate()).padStart(2,'0');
+      return `${y}-${m}-${dd}`;
+    }
+
+    // ==============  項目順序徽章  ==============
+    function ensureBadge(el){
+      let b = el.querySelector('.order-badge');
+      if (!b) {
+        b = document.createElement('div');
+        b.className = 'order-badge';
+        el.appendChild(b);
+      }
+      return b;
+    }
+    function renderOptionBadges(){
+      optionsEls.forEach(el=>{
+        const val = el.dataset.value;
+        const idx = selectedOptions.indexOf(val);
+        if (idx >= 0) {
+          el.classList.add('selected');
+          const badge = ensureBadge(el);
+          badge.textContent = (idx + 1);
+          badge.style.display = 'flex';
+        } else {
+          el.classList.remove('selected');
+          const badge = el.querySelector('.order-badge');
+          if (badge) badge.style.display = 'none';
+        }
+      });
+      nextBtn1.disabled = selectedOptions.length === 0;
+    }
+    optionsEls.forEach(el=>{
+      el.addEventListener('click', ()=>{
+        const v = el.dataset.value;
+        const i = selectedOptions.indexOf(v);
+        if (i >= 0) selectedOptions.splice(i, 1);
+        else selectedOptions.push(v);
+        renderOptionBadges();
+      });
+    });
+    // ============== /項目順序徽章 ==============
+
+    // 4) 導頁
+    nextBtn1.onclick = ()=>{ step1.classList.remove('active'); step2.classList.add('active'); };
+    prevBtn1.onclick = ()=>{ step2.classList.remove('active'); step1.classList.add('active'); };
+    datePicker.onchange = ()=>{ nextBtn2.disabled = !datePicker.value; };
+
+    nextBtn2.onclick = ()=>{
+      selectedDate = datePicker.value; // yyyy-mm-dd
+      step2.classList.remove('active'); step3.classList.add('active');
+      renderTimes();
+    };
+    prevBtn2.onclick = ()=>{ step3.classList.remove('active'); step2.classList.add('active'); };
+
+    // 5) 產生時段（9–12、14–22）
+    function renderTimes(){
+      timeslotContainer.innerHTML = '';
+      const ranges = [[9,12],[14,22]];
+      ranges.forEach(([s,e])=>{
+        for(let h=s; h<e; h++){
+          const t = `${String(h).padStart(2,'0')}:00~${String(h+1).padStart(2,'0')}:00`;
+          const div = document.createElement('div');
+          div.className = 'timeslot';
+          div.textContent = t;
+          div.onclick = ()=>{
+            document.querySelectorAll('.timeslot').forEach(el=>el.classList.remove('selected'));
+            div.classList.add('selected');
+            selectedTime = t;
+            nextBtn3.disabled = false;
+          };
+          timeslotContainer.appendChild(div);
+        }
+      });
+    }
+
+    // 6) 送出預約（simple request：避免 CORS 預檢）
+    nextBtn3.onclick = async ()=>{
+      if (!selectedDate || !selectedTime || selectedOptions.length===0) {
+        alert('請先選好項目、日期、時間'); return;
+      }
+      if (!userId) { alert('尚未取得使用者資訊，請重整頁面或重新登入。'); return; }
+      nextBtn3.disabled = true;
+
+      const payload = {
+        userId, displayName,
+        date: selectedDate,                // yyyy-mm-dd
+        timeSlots: [selectedTime],
+        services: selectedOptions
+      };
+
+      try{
+        const res = await fetch(GAS_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // ✅ simple request，不觸發 OPTIONS
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json().catch(()=> ({}));
+        if (res.ok && data.ok){
+          log('預約成功。', true);
+          step3.classList.remove('active'); step4.classList.add('active');
+        } else {
+          log('送出失敗：' + (data.error || data.message || ('HTTP '+res.status)), false, true);
+          alert('送出失敗：' + (data.error || data.message || ('HTTP '+res.status)));
+          nextBtn3.disabled = false;
+        }
+      }catch(err){
+        log('送出失敗（fetch 例外）：' + (err?.message || err), false, true);
+        alert('送出失敗：' + (err?.message || err));
+        nextBtn3.disabled = false;
+      }
+    };
+  </script>
 </body>
 </html>
-
-
-
-
-
