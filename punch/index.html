@@ -29,7 +29,7 @@
 
   <script>
     const GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbwfLMa_8aUatD2MYVWciwy_UYjpFjRW57roYUcvxSkvvk1XPZiSS0UKdKZwlVKUfnVneg/exec'; // 由 doGet 注入（如果你前端不走 GAS 託管，就直接填部署網址）
-    const LIFF_ID = '2007686418';
+    const LIFF_ID = '2007686418-OvlBgmQW';
 
     const $ = (id)=> document.getElementById(id);
     const log = (...a)=> { const el=$('log'); el.innerHTML += `<div>${a.map(x=>typeof x==='string'?x:JSON.stringify(x)).join(' ')}</div>`; };
