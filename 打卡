@@ -1,0 +1,99 @@
+// src/index.js
+// 前端提供打卡頁面；後端直接呼叫 GAS
+
+const LIFF_ID = '2007686418-OvlBgmQW';  
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbz1W5AlhO7SXWjw4UDUsTr0vVecwedYw1FeRQPNaefsGzR9kex4ZV7EzqPp8wY2mPCaEg/exec';
+
+export default {
+  async fetch(req) {
+    const url = new URL(req.url);
+
+    // 健康檢查
+    if (req.method === "GET" && url.pathname === "/") {
+      return text("Worker OK ✅\n\n/punch → 打卡");
+    }
+
+    // 打卡頁面
+    if (req.method === "GET" && url.pathname === "/punch") {
+      return html(punchHtml);
+    }
+
+    // 打卡 API：前端送 userId + displayName → 轉送到 GAS
+    if (req.method === "POST" && url.pathname === "/punch") {
+      const { userId, displayName } = await req.json();
+      if (!userId) return jerr("缺少 userId");
+
+      const result = await callGAS(GAS_URL, {
+        action: "punch",
+        userId,
+        displayName,
+      });
+      return json(result, result.success ? 200 : 400);
+    }
+
+    return new Response("Not Found", { status: 404 });
+  },
+};
+
+/* ================= 工具 ================= */
+
+function html(s){ return new Response(s,{headers:{'content-type':'text/html; charset=utf-8'}}); }
+function text(s){ return new Response(s,{headers:{'content-type':'text/plain; charset=utf-8'}}); }
+function json(o,s=200){ return new Response(JSON.stringify(o),{status:s,headers:{'content-type':'application/json'}}); }
+function jerr(msg,s=400){ return json({success:false,message:msg},s); }
+
+async function callGAS(url, payload){
+  try{
+    const r = await fetch(url, { 
+      method:'POST', 
+      headers:{'content-type':'application/json'}, 
+      body: JSON.stringify(payload) 
+    });
+    const txt = await r.text();
+    try { return JSON.parse(txt); }
+    catch { return { success:false, message:'GAS 回傳非 JSON', raw: txt }; }
+  }catch(e){
+    return { success:false, message:'GAS 連線失敗：'+e.message };
+  }
+}
+
+/* ================= 前端頁：打卡（LIFF 自動送 userId/displayName） ================= */
+const punchHtml = `<!doctype html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>打卡</title>
+<style>
+  body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Arial;
+        background:#0f172a; color:#e2e8f0; display:flex; align-items:center; justify-content:center; height:100vh;}
+  .card{ background:#111827; border:1px solid #1f2937; border-radius:14px; padding:20px; text-align:center;}
+  .msg{ margin-top:12px; white-space:pre-wrap; }
+</style>
+<div class="card">
+  <h1>打卡</h1>
+  <div id="msg">初始化中…</div>
+</div>
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script>
+const LIFF_ID = "${LIFF_ID}";
+async function main(){
+  const msg = document.getElementById('msg');
+  const show = (t)=>msg.textContent=t;
+  try{
+    await liff.init({ liffId: LIFF_ID });
+    if(!liff.isLoggedIn()){ liff.login({}); return; }
+
+    const idToken = liff.getDecodedIDToken();
+    const profile = await liff.getProfile();
+    const userId = idToken.sub;
+    const displayName = profile.displayName;
+
+    show("送出打卡中…");
+    const r = await fetch("/punch",{method:"POST",headers:{'content-type':'application/json'},body:JSON.stringify({userId,displayName})});
+    const j = await r.json();
+    show(j.success ? ("✅ "+j.message) : ("❌ "+(j.message||"打卡失敗")));
+  }catch(e){
+    show("❌ 錯誤："+e.message);
+  }
+}
+main();
+</script>`;
