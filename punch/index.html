@@ -1,94 +1,198 @@
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>LINE 一鍵打卡</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>LIFF 生物辨識打卡</title>
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <style>
-    :root{ color-scheme: light dark; }
-    body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Arial;
-          background:#0f172a; color:#e2e8f0; min-height:100vh; display:grid; place-items:center; }
-    .card{ width:min(640px,92%); background:#111827; border:1px solid #1f2937; border-radius:16px; padding:22px; text-align:center; }
-    h1{ margin:0 0 8px 0; font-size:26px; }
-    .name{ font-size:20px; opacity:.9; margin-bottom:14px; }
-    button{ padding:12px 18px; border:0; border-radius:12px; background:#0ea5e9; color:#fff; font-weight:700; cursor:pointer; }
-    button[disabled]{ opacity:.6; cursor:not-allowed; }
-    .msg{ margin-top:12px; white-space:pre-wrap; font-size:14px; opacity:.9; }
-    .muted{ opacity:.7; font-size:12px; margin-top:6px; }
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans TC", Arial; padding: 16px; }
+    .card { border:1px solid #eee; border-radius:12px; padding:16px; margin:12px 0; box-shadow:0 2px 8px rgba(0,0,0,.05); }
+    button { padding:12px 16px; border-radius:10px; border:1px solid #ddd; background:#fafafa; cursor:pointer; }
+    .ok { color: #0a7a0a; }
+    .err { color: #b00020; }
+    .muted { color: #777; font-size: 12px; }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>一鍵打卡</h1>
-    <div class="name" id="name">讀取中…</div>
-    <button id="btn" disabled>打卡</button>
-    <div class="msg" id="msg">初始化 LIFF 中…</div>
-    <div class="muted">若卡住可關閉重開或稍後重試</div>
+  <h2>生物辨識打卡</h2>
+  <div id="status" class="card">初始化中…</div>
+  <div id="actions" class="card" style="display:none">
+    <div id="user"></div>
+    <div id="flow"></div>
+    <div style="margin-top:12px">
+      <button id="btn">開始</button>
+    </div>
+    <div id="hint" class="muted" style="margin-top:8px"></div>
   </div>
+  <div id="log" class="card"></div>
 
-  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <script>
-    // 你的參數（可改）
-    const LIFF_ID = '2007686418-OvlBgmQW';
-    const GAS_URL = 'https://script.google.com/macros/s/AKfycbxq1RXIcWlWOnf6328zyAWVSyB1VrKnDBJD-CRHa-G7qhjqIHqKlG1iKjgcTuDB8qzZQQ/exec';
+    const GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbwfLMa_8aUatD2MYVWciwy_UYjpFjRW57roYUcvxSkvvk1XPZiSS0UKdKZwlVKUfnVneg/exec'; // 由 doGet 注入（如果你前端不走 GAS 託管，就直接填部署網址）
+    const LIFF_ID = '2007686418';
 
-    const $ = (id) => document.getElementById(id);
-    const show = (t) => { $('msg').textContent = t; };
-    let identity = { userId: '', displayName: '' };
+    const $ = (id)=> document.getElementById(id);
+    const log = (...a)=> { const el=$('log'); el.innerHTML += `<div>${a.map(x=>typeof x==='string'?x:JSON.stringify(x)).join(' ')}</div>`; };
+    const setStatus = (html)=> $('status').innerHTML = html;
 
-    async function initLiff() {
-      show('初始化 LIFF…');
-      await liff.init({ liffId: LIFF_ID });
-      if (!liff.isLoggedIn()) { liff.login({}); return false; }
+    let profile = null;
+    let staffExists = false;
+    let savedCredentialId = null;
 
-      show('讀取使用者資料…');
-      const idt = liff.getDecodedIDToken();     // 需 openid
-      const prof = await liff.getProfile();     // 需 profile
-      if (!idt || !idt.sub) throw new Error('未取得 userId（請確認 LIFF scope 勾選 openid）');
+    // Base64URL 工具
+    const b64uToBuf = (b64u) => {
+      const pad = '='.repeat((4 - b64u.length % 4) % 4);
+      const b64 = (b64u.replace(/-/g, '+').replace(/_/g, '/')) + pad;
+      const str = atob(b64);
+      const buf = new ArrayBuffer(str.length);
+      const view = new Uint8Array(buf);
+      for (let i=0;i<str.length;i++) view[i] = str.charCodeAt(i);
+      return buf;
+    };
+    const bufToB64u = (buf) => {
+      const bytes = (buf instanceof ArrayBuffer) ? new Uint8Array(buf) : new Uint8Array(buf.buffer);
+      let str = '';
+      for (let i=0;i<bytes.byteLength;i++) str += String.fromCharCode(bytes[i]);
+      return btoa(str).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+    };
 
-      identity.userId = idt.sub;
-      identity.displayName = prof.displayName || '';
-      $('name').textContent = identity.displayName ? `嗨，${identity.displayName}` : '歡迎使用';
-      $('btn').disabled = false;
-      show('就緒，請按下「打卡」。');
-      return true;
+    async function api(action, body) {
+      const res = await fetch(GAS_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ action, ...body })
+      });
+      return res.json();
     }
 
-    async function punch() {
-      $('btn').disabled = true;
-      show('送出打卡中…');
-
+    async function init() {
       try {
-        // 用 text/plain → simple request，避免 CORS/預檢
-        const res = await fetch(GAS_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain' },
-          body: JSON.stringify({
-            action: 'punch',
-            userId: identity.userId,
-            displayName: identity.displayName,
-            ts: Date.now()
-          })
+        setStatus('初始化 LIFF…');
+        await liff.init({ liffId: LIFF_ID });
+        if (!liff.isLoggedIn()) liff.login();
+
+        // 取得使用者資料
+        const p = await liff.getProfile();
+        profile = { userId: p.userId, displayName: p.displayName };
+        $('user').innerHTML = `<b>${profile.displayName}</b> <span class="muted">(${profile.userId})</span>`;
+        $('actions').style.display = '';
+
+        // 檢查是否已註冊
+        setStatus('檢查註冊狀態…');
+        const ck = await api('checkStaff', { userId: profile.userId });
+        staffExists = ck.exists;
+        savedCredentialId = ck.staff?.credentialId || null;
+
+        if (!staffExists || !savedCredentialId) {
+          $('flow').innerHTML = '尚未註冊，將進行一次性的「裝置生物辨識註冊」。';
+          $('btn').innerText = '開始註冊';
+          $('btn').onclick = registerFlow;
+          $('hint').innerText = '註冊後，未來靠近 NFC → 開啟頁面即可直接做生物辨識打卡。';
+        } else {
+          $('flow').innerHTML = '已註冊；將使用裝置生物辨識驗證後打卡。';
+          $('btn').innerText = '開始驗證打卡';
+          $('btn').onclick = authAndPunchFlow;
+          $('hint').innerText = '若更換新手機，需重新註冊一次。';
+        }
+        setStatus('<span class="ok">準備就緒</span>');
+      } catch (e) {
+        setStatus(`<span class="err">初始化失敗</span>`);
+        log('init error:', e);
+      }
+    }
+
+    /** 註冊流程：navigator.credentials.create → 存 credentialId 到後端 */
+    async function registerFlow() {
+      try {
+        $('btn').disabled = true;
+        $('flow').innerHTML = '請使用 FaceID / 指紋 進行註冊…';
+
+        // 最基本的 PublicKeyCredential 註冊參數（本機 Passkey）
+        const pubKeyOpts = {
+          publicKey: {
+            rp: { name: "Punch System" },
+            user: {
+              id: new TextEncoder().encode(profile.userId),
+              name: profile.userId,
+              displayName: profile.displayName || profile.userId
+            },
+            challenge: crypto.getRandomValues(new Uint8Array(32)),
+            pubKeyCredParams: [{ type: 'public-key', alg: -7 }], // ES256
+            authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required" },
+            timeout: 60000,
+          }
+        };
+        const cred = await navigator.credentials.create(pubKeyOpts);
+        if (!cred) throw new Error('註冊取消');
+
+        const credentialId = bufToB64u(cred.rawId);
+        // 儲存 credentialId 到後端
+        const saved = await api('saveRegistration', {
+          userId: profile.userId,
+          displayName: profile.displayName,
+          credentialId
         });
 
-        const txt = await res.text();
-        let j; try { j = JSON.parse(txt); } catch { j = { success:false, message:'GAS 回傳非 JSON', raw: txt }; }
+        if (!saved.ok) throw new Error(saved.error || 'saveRegistration 失敗');
+        savedCredentialId = credentialId;
+        staffExists = true;
 
-        if (j.success) {
-          show('✅ ' + (j.message || '打卡成功'));
-        } else {
-          show('❌ ' + (j.message || '打卡失敗'));
-        }
+        $('flow').innerHTML = '<span class="ok">註冊成功！</span> 現在進行首次驗證打卡…';
+        await authAndPunchFlow();
       } catch (e) {
-        show('❌ ' + (e.message || e));
+        $('flow').innerHTML = `<span class="err">註冊失敗：</span> ${e.message || e}`;
+        log('register error:', e);
       } finally {
         $('btn').disabled = false;
       }
     }
 
-    $('btn').addEventListener('click', punch);
-    // 進頁面就先初始化
-    initLiff().catch(err => show('❌ ' + err.message));
+    /** 驗證 + 打卡：navigator.credentials.get → 後端 punch */
+    async function authAndPunchFlow() {
+      try {
+        $('btn').disabled = true;
+        $('flow').innerHTML = '請使用 FaceID / 指紋 進行驗證…';
+
+        // 若記錄了 credentialId，讓瀏覽器優先挑那把憑證
+        const allow = savedCredentialId ? [{ type:'public-key', id: b64uToBuf(savedCredentialId) }] : [];
+        const getOpts = {
+          publicKey: {
+            challenge: crypto.getRandomValues(new Uint8Array(32)),
+            allowCredentials: allow,
+            userVerification: 'required',
+            timeout: 60000
+          },
+          mediation: 'required' // 嘗試直接喚起平台驗證
+        };
+
+        const assertion = await navigator.credentials.get(getOpts);
+        if (!assertion) throw new Error('驗證取消');
+
+        const usedCredId = bufToB64u(assertion.rawId);
+
+        // 輕量驗證（server 僅比對 credentialId 是否一致）
+        const punched = await api('punch', {
+          userId: profile.userId,
+          displayName: profile.displayName,
+          credentialId: usedCredId
+        });
+
+        if (!punched.ok) {
+          const msg = punched.reason || punched.error || '打卡失敗';
+          $('flow').innerHTML = `<span class="err">${msg}</span>`;
+          return;
+        }
+        $('flow').innerHTML = `<span class="ok">打卡成功</span>（${punched.type}）於 ${punched.time}，當日第 ${punched.count} 次。`;
+      } catch (e) {
+        $('flow').innerHTML = `<span class="err">驗證或打卡失敗：</span> ${e.message || e}`;
+        log('auth error:', e);
+      } finally {
+        $('btn').disabled = false;
+      }
+    }
+
+    // 自動啟動
+    init();
   </script>
 </body>
 </html>
