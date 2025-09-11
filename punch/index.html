@@ -3,19 +3,24 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>LIFF 生物辨識打卡（合規防阻擋版）</title>
+  <title>LIFF 生物辨識打卡（除錯加強版）</title>
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <style>
     :root { color-scheme: light dark; }
     body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans TC", Arial; padding: 16px; }
     .card { border:1px solid #eee; border-radius:12px; padding:16px; margin:12px 0; box-shadow:0 2px 8px rgba(0,0,0,.05); }
-    button { padding:12px 16px; border-radius:10px; border:1px solid #ddd; background:#fafafa; cursor:pointer; }
-    .ok { color: #0a7a0a; }
-    .err { color: #b00020; }
-    .muted { color: #777; font-size: 12px; }
-    #openInLineBtn { display:none; margin-top:10px; }
-    #actions { display:none; }
+    .ok { color:#0a7a0a; font-weight:600; }
+    .warn { color:#a96b00; font-weight:600; }
+    .err { color:#b00020; font-weight:600; }
+    .muted { color:#777; font-size:12px; }
+    .step { padding:6px 10px; border-left:4px solid #ddd; margin:8px 0; }
+    .step.ok { border-left-color:#0a7a0a; }
+    .step.err { border-left-color:#b00020; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
     pre { white-space: pre-wrap; word-break: break-word; }
+    button { padding:10px 14px; border-radius:10px; border:1px solid #ddd; background:#fafafa; cursor:pointer; }
+    #actions { display:none; }
+    #openInLineBtn { display:none; margin-left:8px; }
   </style>
 </head>
 <body>
@@ -24,8 +29,17 @@
   <div id="status" class="card">初始化中…</div>
 
   <div class="card">
-    <div class="muted">若非在 LINE App 內開啟，可能無法完整使用。請點下方按鈕以 LINE 開啟。</div>
+    <div class="muted">若不是在 LINE App 開啟，部份能力可能受限。可點這顆用 LINE 開啟：</div>
     <button id="openInLineBtn">用 LINE 開啟</button>
+  </div>
+
+  <div id="diag" class="card">
+    <div class="step" id="s0">S0 讀取環境…</div>
+    <div class="step" id="s1">S1 LIFF 初始化…</div>
+    <div class="step" id="s2">S2 檢查登入狀態…</div>
+    <div class="step" id="s3">S3 取得使用者資料（getProfile → ID Token 備援）…</div>
+    <div class="step" id="s4">S4 測試連線 GAS…</div>
+    <div class="step" id="s5">S5 檢查註冊狀態…</div>
   </div>
 
   <div id="actions" class="card">
@@ -35,176 +49,217 @@
     <div id="hint" class="muted" style="margin-top:8px"></div>
   </div>
 
-  <div class="card"><b>診斷輸出：</b><pre id="logpre"></pre></div>
+  <div class="card"><b>詳細輸出</b>（貼給我可快速定位）：<pre id="log" class="mono"></pre></div>
 
-  <script>
-    /* ===== 你的環境參數 ===== */
-    const GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbwfLMa_8aUatD2MYVWciwy_UYjpFjRW57roYUcvxSkvvk1XPZiSS0UKdKZwlVKUfnVneg/exec';
-    const LIFF_ID      = '2007686418-OvlBgmQW';
+<script>
+/* ===== 你的環境參數 ===== */
+const GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbwfLMa_8aUatD2MYVWciwy_UYjpFjRW57roYUcvxSkvvk1XPZiSS0UKdKZwlVKUfnVneg/exec';
+const LIFF_ID      = '2007686418-OvlBgmQW';
+const EXPECT_HOST  = '9334yang.github.io';
+const EXPECT_PATH  = '/reserve-system/punch/'; // 你設定在 LIFF Endpoint URL 的路徑（務必含尾斜線）
 
-    /* ===== DOM / log ===== */
-    const $ = id => document.getElementById(id);
-    const setStatus = html => $('status').innerHTML = html;
-    const log = (...a) => { $('logpre').textContent += a.map(x=>typeof x==='string'?x:JSON.stringify(x,null,2)).join(' ') + '\n'; };
+/* ===== 快速 DOM 工具 ===== */
+const $ = id => document.getElementById(id);
+const log = (...a) => { $('log').textContent += a.map(x => typeof x==='string' ? x : JSON.stringify(x,null,2)).join(' ') + '\n'; };
+const stepOk  = id => { const el=$(id); el.classList.remove('err'); el.classList.add('ok'); el.innerHTML += ' <span class="ok">OK</span>'; };
+const stepErr = (id,msg) => { const el=$(id); el.classList.remove('ok'); el.classList.add('err'); el.innerHTML += ` <span class="err">FAILED</span> ${msg?(' — '+msg):''}`; };
+const setStatus = html => $('status').innerHTML = html;
 
-    let profile = null;
-    let staffExists = false;
-    let savedCredentialId = null;
+let profile=null, staffExists=false, savedCredentialId=null;
 
-    /* ===== Base64URL 工具 ===== */
-    const b64uToBuf = (b64u) => {
-      const pad = '='.repeat((4 - b64u.length % 4) % 4);
-      const b64 = (b64u.replace(/-/g,'+').replace(/_/g,'/')) + pad;
-      const str = atob(b64);
-      const buf = new ArrayBuffer(str.length);
-      const view = new Uint8Array(buf);
-      for (let i=0;i<str.length;i++) view[i] = str.charCodeAt(i);
-      return buf;
+/* ===== 通用工具 ===== */
+const b64uToBuf=(b64u)=>{const pad='='.repeat((4-b64u.length%4)%4);const b64=(b64u.replace(/-/g,'+').replace(/_/g,'/'))+pad;const str=atob(b64);const buf=new ArrayBuffer(str.length);const view=new Uint8Array(buf);for(let i=0;i<str.length;i++) view[i]=str.charCodeAt(i);return buf;};
+const bufToB64u=(buf)=>{const bytes=(buf instanceof ArrayBuffer)?new Uint8Array(buf):new Uint8Array(buf.buffer);let s='';for(let i=0;i<bytes.byteLength;i++) s+=String.fromCharCode(bytes[i]);return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');};
+
+async function api(action, body){
+  const res = await fetch(GAS_ENDPOINT, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action, ...body }) });
+  return res.json();
+}
+
+/* ===== 全域錯誤攔截（也會寫進 log） ===== */
+window.addEventListener('error', e => log('window.error', e.message, e.filename, e.lineno));
+window.addEventListener('unhandledrejection', e => log('unhandledrejection', e.reason?.message || String(e.reason)));
+
+/* ===== 入口 ===== */
+(async function init(){
+  const debug = new URL(location.href).searchParams.get('debug') === '1';
+  try {
+    // S0：環境
+    const env = {
+      href: location.href,
+      origin: location.origin,
+      host: location.host,
+      pathname: location.pathname,
+      ua: navigator.userAgent,
+      inTop: window.top === window.self,
+      hashHasAccessToken: location.hash.includes('access_token'),
+      expectedHostMatch: location.host === EXPECT_HOST,
+      expectedPathMatch: location.pathname.endsWith('/') ? (location.pathname === EXPECT_PATH) : ((location.pathname + '/') === EXPECT_PATH),
     };
-    const bufToB64u = (buf) => {
-      const bytes = (buf instanceof ArrayBuffer) ? new Uint8Array(buf) : new Uint8Array(buf.buffer);
-      let str = ''; for (let i=0;i<bytes.byteLength;i++) str += String.fromCharCode(bytes[i]);
-      return btoa(str).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-    };
+    $('s0').innerHTML += `<div class="muted mono">host=${env.host} path=${env.pathname} hashHasAccessToken=${env.hashHasAccessToken}</div>`;
+    if (!env.expectedHostMatch) $('s0').innerHTML += `<div class="warn">警告：目前 host 與預期不同，預期 ${EXPECT_HOST}</div>`;
+    if (!env.expectedPathMatch) $('s0').innerHTML += `<div class="warn">警告：目前 path 與預期不同，預期 ${EXPECT_PATH}（需含尾斜線）</div>`;
+    log('env', env);
+    stepOk('s0');
 
-    /* ===== 後端 API ===== */
-    async function api(action, body) {
-      const res = await fetch(GAS_ENDPOINT, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action, ...body }) });
-      return res.json();
+    // 顯示「用 LINE 開啟」按鈕
+    $('openInLineBtn').onclick = () => location.href = `https://liff.line.me/${LIFF_ID}`;
+
+    // S1：LIFF init
+    try {
+      await liff.init({ liffId: LIFF_ID, withLoginOnExternalBrowser: true });
+      const info = { inClient:liff.isInClient(), os:liff.getOS(), lang:liff.getLanguage(), ver: liff.getVersion?.() };
+      $('s1').innerHTML += `<div class="muted mono">${JSON.stringify(info)}</div>`;
+      log('liff.init ok', info);
+      stepOk('s1');
+    } catch (e) {
+      stepErr('s1', e?.code || e?.message || e);
+      setStatus('<span class="err">初始化失敗（S1）</span>');
+      log('init error', { code:e?.code, message:e?.message, name:e?.name, stack:e?.stack });
+      return;
     }
 
-    /* ===== 初始化（合規防阻擋） ===== */
-    async function init() {
-      try {
-        setStatus('初始化 LIFF…');
-        log('env', { href: location.href, ua: navigator.userAgent });
+    // S2：登入狀態
+    if (!liff.isLoggedIn()) {
+      $('s2').innerHTML += `<div class="muted">尚未登入 → 轉導登入（redirect 使用 LIFF 深連結）</div>`;
+      stepOk('s2');
+      // 注意：呼叫後會跳轉，這裡 return 避免往下執行
+      liff.login({ redirectUri: `https://liff.line.me/${LIFF_ID}` });
+      return;
+    } else {
+      $('s2').innerHTML += `<div class="muted">已登入</div>`;
+      if (!liff.isInClient()) $('openInLineBtn').style.display = 'inline-block';
+      stepOk('s2');
+    }
 
-        // 被嵌入就嘗試頂層導轉（避免 X-Frame-Options/CSP）
-        if (window.top !== window.self) {
-          try { window.top.location = window.location.href; } catch (_e) {}
-        }
-
-        await liff.init({ liffId: LIFF_ID, withLoginOnExternalBrowser: true });
-        log('liff.init ok', { inClient: liff.isInClient(), os: liff.getOS(), lang: liff.getLanguage() });
-
-        if (!liff.isLoggedIn()) {
-          // 用 LIFF 深連結當 redirect，避免 GitHub Pages 尾斜線/301 造成 domain/path 比對失敗
-          liff.login({ redirectUri: `https://liff.line.me/${LIFF_ID}` });
-          return; // 務必 return
-        }
-
-        if (!liff.isInClient()) {
-          $('openInLineBtn').style.display = 'inline-block';
-          $('openInLineBtn').onclick = () => location.href = `https://liff.line.me/${LIFF_ID}`;
-        }
-
-        // 取得使用者資料（getProfile → 失敗 fallback 到 ID Token）
-        let p = null;
-        try { p = await liff.getProfile(); } catch (e) { log('getProfile failed, try ID token', e); }
-        if (p && p.userId)       profile = { userId: p.userId, displayName: p.displayName || '' };
-        else {
-          const idt = liff.getDecodedIDToken?.();
-          if (idt?.sub) profile = { userId: idt.sub, displayName: '' };
-          else throw new Error('無法取得使用者資料（getProfile / ID Token 皆失敗）');
-        }
-
-        $('user').innerHTML = `<b>${profile.displayName || '（無暱稱）'}</b> <span class="muted">(${profile.userId})</span>`;
-        $('actions').style.display = '';
-
-        setStatus('檢查註冊狀態…');
-        const ck = await api('checkStaff', { userId: profile.userId });
-        log('checkStaff', ck);
-        staffExists = !!ck.exists;
-        savedCredentialId = ck.staff?.credentialId || null;
-
-        if (!staffExists || !savedCredentialId) {
-          $('flow').innerHTML = '尚未註冊，將進行一次性的「裝置生物辨識註冊」。';
-          $('btn').innerText = '開始註冊';
-          $('btn').onclick = registerFlow;
-          $('hint').innerText = '註冊後，靠近 NFC 開啟即可直接驗證打卡。';
-        } else {
-          $('flow').innerHTML = '已註冊；將使用裝置生物辨識驗證後打卡。';
-          $('btn').innerText = '開始驗證打卡';
-          $('btn').onclick = authAndPunchFlow;
-          $('hint').innerText = '若更換新手機，需重新註冊一次。';
-        }
-
-        setStatus('<span class="ok">準備就緒</span>');
-      } catch (e) {
-        setStatus('<span class="err">初始化失敗</span>');
-        log('init error', { code: e?.code, message: e?.message, name: e?.name, stack: e?.stack, href: location.href });
-        log('hints', [
-          'Endpoint URL 必須完全等於：https://9334yang.github.io/reserve-system/punch/ （含最後 / ）',
-          '用 LIFF 深連結開啟： https://liff.line.me/' + LIFF_ID,
-          'Scopes 至少包含 profile（LIFF 設定中）'
-        ]);
+    // S3：取得使用者資料
+    try {
+      let p = null;
+      try { p = await liff.getProfile(); } catch (e) { log('getProfile failed → try ID token', e); }
+      if (p && p.userId) profile = { userId: p.userId, displayName: p.displayName || '' };
+      else {
+        const idt = liff.getDecodedIDToken?.();
+        if (idt?.sub) profile = { userId: idt.sub, displayName: '' };
+        else throw new Error('getProfile 與 ID Token 皆失敗');
       }
+      $('s3').innerHTML += `<div class="muted mono">${JSON.stringify(profile)}</div>`;
+      stepOk('s3');
+    } catch (e) {
+      stepErr('s3', e?.message || e);
+      setStatus('<span class="err">初始化失敗（S3 取用戶資料）</span>');
+      log('profile error', e);
+      return;
     }
 
-    /* ===== 註冊（WebAuthn create） ===== */
-    async function registerFlow() {
-      try {
-        $('btn').disabled = true;
-        $('flow').innerHTML = '請使用 FaceID / 指紋 進行註冊…';
-        if (!window.PublicKeyCredential) throw new Error('此裝置/瀏覽器不支援 WebAuthn');
+    // 顯示 UI
+    $('user').innerHTML = `<b>${profile.displayName || '（無暱稱）'}</b> <span class="muted mono">(${profile.userId})</span>`;
+    $('actions').style.display = '';
 
-        const pubKeyOpts = {
-          publicKey: {
-            rp: { name: "Punch System" },
-            user: { id: new TextEncoder().encode(profile.userId), name: profile.userId, displayName: profile.displayName || profile.userId },
-            challenge: crypto.getRandomValues(new Uint8Array(32)),
-            pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
-            authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required" },
-            timeout: 60000
-          }
-        };
+    // S4：測試 GAS 連線（CORS／URL 正不正）
+    try {
+      const ping = await fetch(GAS_ENDPOINT, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'ping' }) });
+      $('s4').innerHTML += `<div class="muted">status=${ping.status} ok=${ping.ok}</div>`;
+      stepOk('s4');
+    } catch (e) {
+      stepErr('s4', e?.message || e);
+      log('GAS ping error', e);
+      // 不中斷，繼續往下
+    }
 
-        const cred = await navigator.credentials.create(pubKeyOpts);
-        if (!cred) throw new Error('註冊取消');
+    // S5：檢查是否註冊
+    try {
+      const ck = await api('checkStaff', { userId: profile.userId });
+      log('checkStaff', ck);
+      staffExists = !!ck.exists;
+      savedCredentialId = ck.staff?.credentialId || null;
+      $('s5').innerHTML += `<div class="muted">exists=${staffExists} credentialId=${savedCredentialId||'(none)'}</div>`;
+      stepOk('s5');
+    } catch (e) {
+      stepErr('s5', e?.message || e);
+      log('checkStaff error', e);
+      return;
+    }
 
-        const credentialId = bufToB64u(cred.rawId);
-        const saved = await api('saveRegistration', { userId: profile.userId, displayName: profile.displayName, credentialId });
-        if (!saved.ok) throw new Error(saved.error || 'saveRegistration 失敗');
+    // 配置主流程
+    if (!staffExists || !savedCredentialId) {
+      $('flow').textContent = '尚未註冊，將進行一次性的「裝置生物辨識註冊」。';
+      $('btn').textContent = '開始註冊';
+      $('btn').onclick = registerFlow;
+      $('hint').textContent = '註冊後，靠近 NFC 直接驗證打卡。';
+    } else {
+      $('flow').textContent = '已註冊；將使用裝置生物辨識驗證後打卡。';
+      $('btn').textContent = '開始驗證打卡';
+      $('btn').onclick = authAndPunchFlow;
+      $('hint').textContent = '若更換新手機需再註冊一次。';
+    }
 
-        savedCredentialId = credentialId;
-        $('flow').innerHTML = '<span class="ok">註冊成功！</span> 現在進行首次驗證打卡…';
-        await authAndPunchFlow();
-      } catch (e) {
-        $('flow').innerHTML = `<span class="err">註冊失敗：</span> ${e.message || e}`;
-        log('register error', e);
-      } finally {
-        $('btn').disabled = false;
+    setStatus('<span class="ok">準備就緒</span>');
+
+  } catch (e) {
+    setStatus('<span class="err">初始化失敗（未預期）</span>');
+    log('fatal init error', { message:e?.message, stack:e?.stack });
+  }
+})();
+
+/* ===== 註冊（WebAuthn create） ===== */
+async function registerFlow(){
+  try{
+    $('btn').disabled = true;
+    $('flow').textContent = '請使用 FaceID / 指紋 進行註冊…';
+    if (!window.PublicKeyCredential) throw new Error('此裝置/瀏覽器不支援 WebAuthn');
+
+    const cred = await navigator.credentials.create({
+      publicKey: {
+        rp: { name: 'Punch System' },
+        user: { id:new TextEncoder().encode(profile.userId), name: profile.userId, displayName: profile.displayName || profile.userId },
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        pubKeyCredParams: [{ type:'public-key', alg:-7 }],
+        authenticatorSelection: { authenticatorAttachment:'platform', userVerification:'required' },
+        timeout: 60000
       }
-    }
+    });
+    if (!cred) throw new Error('註冊取消');
 
-    /* ===== 驗證 + 打卡（WebAuthn get → punch） ===== */
-    async function authAndPunchFlow() {
-      try {
-        $('btn').disabled = true;
-        $('flow').innerHTML = '請使用 FaceID / 指紋 進行驗證…';
-        if (!window.PublicKeyCredential) throw new Error('此裝置/瀏覽器不支援 WebAuthn');
+    const credentialId = bufToB64u(cred.rawId);
+    const saved = await api('saveRegistration', { userId: profile.userId, displayName: profile.displayName, credentialId });
+    if (!saved.ok) throw new Error(saved.error || 'saveRegistration 失敗');
 
-        const allow = savedCredentialId ? [{ type:'public-key', id: b64uToBuf(savedCredentialId) }] : [];
-        const assertion = await navigator.credentials.get({
-          publicKey: { challenge: crypto.getRandomValues(new Uint8Array(32)), allowCredentials: allow, userVerification: 'required', timeout: 60000 },
-          mediation: 'required'
-        });
-        if (!assertion) throw new Error('驗證取消');
+    savedCredentialId = credentialId;
+    $('flow').innerHTML = '<span class="ok">註冊成功！</span> 現在進行首次驗證打卡…';
+    await authAndPunchFlow();
+  }catch(e){
+    $('flow').innerHTML = `<span class="err">註冊失敗：</span> ${e.message || e}`;
+    log('register error', e);
+  }finally{
+    $('btn').disabled = false;
+  }
+}
 
-        const usedCredId = bufToB64u(assertion.rawId);
-        const punched = await api('punch', { userId: profile.userId, displayName: profile.displayName, credentialId: usedCredId });
-        if (!punched.ok) { $('flow').innerHTML = `<span class="err">${punched.reason || punched.error || '打卡失敗'}</span>`; return; }
+/* ===== 驗證 + 打卡（WebAuthn get → punch） ===== */
+async function authAndPunchFlow(){
+  try{
+    $('btn').disabled = true;
+    $('flow').textContent = '請使用 FaceID / 指紋 進行驗證…';
+    if (!window.PublicKeyCredential) throw new Error('此裝置/瀏覽器不支援 WebAuthn');
 
-        $('flow').innerHTML = `<span class="ok">打卡成功</span>（${punched.type}）於 ${punched.time}，當日第 ${punched.count} 次。`;
-      } catch (e) {
-        $('flow').innerHTML = `<span class="err">驗證或打卡失敗：</span> ${e.message || e}`;
-        log('auth error', e);
-      } finally {
-        $('btn').disabled = false;
-      }
-    }
+    const allow = savedCredentialId ? [{ type:'public-key', id:b64uToBuf(savedCredentialId) }] : [];
+    const assertion = await navigator.credentials.get({
+      publicKey: { challenge: crypto.getRandomValues(new Uint8Array(32)), allowCredentials: allow, userVerification:'required', timeout:60000 },
+      mediation: 'required'
+    });
+    if (!assertion) throw new Error('驗證取消');
 
-    init(); // 自動啟動
-  </script>
+    const usedCredId = bufToB64u(assertion.rawId);
+    const punched = await api('punch', { userId: profile.userId, displayName: profile.displayName, credentialId: usedCredId });
+    if (!punched.ok) { $('flow').innerHTML = `<span class="err">${punched.reason || punched.error || '打卡失敗'}</span>`; return; }
+    $('flow').innerHTML = `<span class="ok">打卡成功</span>（${punched.type}）於 ${punched.time}，當日第 ${punched.count} 次。`;
+  }catch(e){
+    $('flow').innerHTML = `<span class="err">驗證或打卡失敗：</span> ${e.message || e}`;
+    log('auth error', e);
+  }finally{
+    $('btn').disabled = false;
+  }
+}
+</script>
 </body>
 </html>
