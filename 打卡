@@ -1,99 +1,94 @@
-// src/index.js
-// 前端提供打卡頁面；後端直接呼叫 GAS
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>LINE 一鍵打卡</title>
+  <style>
+    :root{ color-scheme: light dark; }
+    body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Arial;
+          background:#0f172a; color:#e2e8f0; min-height:100vh; display:grid; place-items:center; }
+    .card{ width:min(640px,92%); background:#111827; border:1px solid #1f2937; border-radius:16px; padding:22px; text-align:center; }
+    h1{ margin:0 0 8px 0; font-size:26px; }
+    .name{ font-size:20px; opacity:.9; margin-bottom:14px; }
+    button{ padding:12px 18px; border:0; border-radius:12px; background:#0ea5e9; color:#fff; font-weight:700; cursor:pointer; }
+    button[disabled]{ opacity:.6; cursor:not-allowed; }
+    .msg{ margin-top:12px; white-space:pre-wrap; font-size:14px; opacity:.9; }
+    .muted{ opacity:.7; font-size:12px; margin-top:6px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>一鍵打卡</h1>
+    <div class="name" id="name">讀取中…</div>
+    <button id="btn" disabled>打卡</button>
+    <div class="msg" id="msg">初始化 LIFF 中…</div>
+    <div class="muted">若卡住可關閉重開或稍後重試</div>
+  </div>
 
-const LIFF_ID = '2007686418-OvlBgmQW';  
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbz1W5AlhO7SXWjw4UDUsTr0vVecwedYw1FeRQPNaefsGzR9kex4ZV7EzqPp8wY2mPCaEg/exec';
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script>
+    // 你的參數（可改）
+    const LIFF_ID = '2007686418-OvlBgmQW';
+    const GAS_URL = 'TiJxcfLe6axUxBZa/GEIBTHskEICFdvZCjzombACSO4rxp8/xBQqrmjWNJZDYgdtZp9xXIi8GbhuCdxRIjxT+e7KamCswg5LPK1SAEyktZyY4TxP181L9P76c5KpvtYSr/FAwsGRaVPXgIMZjcNlogdB04t89/1O/w1cDnyilFU=';
 
-export default {
-  async fetch(req) {
-    const url = new URL(req.url);
+    const $ = (id) => document.getElementById(id);
+    const show = (t) => { $('msg').textContent = t; };
+    let identity = { userId: '', displayName: '' };
 
-    // 健康檢查
-    if (req.method === "GET" && url.pathname === "/") {
-      return text("Worker OK ✅\n\n/punch → 打卡");
+    async function initLiff() {
+      show('初始化 LIFF…');
+      await liff.init({ liffId: LIFF_ID });
+      if (!liff.isLoggedIn()) { liff.login({}); return false; }
+
+      show('讀取使用者資料…');
+      const idt = liff.getDecodedIDToken();     // 需 openid
+      const prof = await liff.getProfile();     // 需 profile
+      if (!idt || !idt.sub) throw new Error('未取得 userId（請確認 LIFF scope 勾選 openid）');
+
+      identity.userId = idt.sub;
+      identity.displayName = prof.displayName || '';
+      $('name').textContent = identity.displayName ? `嗨，${identity.displayName}` : '歡迎使用';
+      $('btn').disabled = false;
+      show('就緒，請按下「打卡」。');
+      return true;
     }
 
-    // 打卡頁面
-    if (req.method === "GET" && url.pathname === "/punch") {
-      return html(punchHtml);
+    async function punch() {
+      $('btn').disabled = true;
+      show('送出打卡中…');
+
+      try {
+        // 用 text/plain → simple request，避免 CORS/預檢
+        const res = await fetch(GAS_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain' },
+          body: JSON.stringify({
+            action: 'punch',
+            userId: identity.userId,
+            displayName: identity.displayName,
+            ts: Date.now()
+          })
+        });
+
+        const txt = await res.text();
+        let j; try { j = JSON.parse(txt); } catch { j = { success:false, message:'GAS 回傳非 JSON', raw: txt }; }
+
+        if (j.success) {
+          show('✅ ' + (j.message || '打卡成功'));
+        } else {
+          show('❌ ' + (j.message || '打卡失敗'));
+        }
+      } catch (e) {
+        show('❌ ' + (e.message || e));
+      } finally {
+        $('btn').disabled = false;
+      }
     }
 
-    // 打卡 API：前端送 userId + displayName → 轉送到 GAS
-    if (req.method === "POST" && url.pathname === "/punch") {
-      const { userId, displayName } = await req.json();
-      if (!userId) return jerr("缺少 userId");
-
-      const result = await callGAS(GAS_URL, {
-        action: "punch",
-        userId,
-        displayName,
-      });
-      return json(result, result.success ? 200 : 400);
-    }
-
-    return new Response("Not Found", { status: 404 });
-  },
-};
-
-/* ================= 工具 ================= */
-
-function html(s){ return new Response(s,{headers:{'content-type':'text/html; charset=utf-8'}}); }
-function text(s){ return new Response(s,{headers:{'content-type':'text/plain; charset=utf-8'}}); }
-function json(o,s=200){ return new Response(JSON.stringify(o),{status:s,headers:{'content-type':'application/json'}}); }
-function jerr(msg,s=400){ return json({success:false,message:msg},s); }
-
-async function callGAS(url, payload){
-  try{
-    const r = await fetch(url, { 
-      method:'POST', 
-      headers:{'content-type':'application/json'}, 
-      body: JSON.stringify(payload) 
-    });
-    const txt = await r.text();
-    try { return JSON.parse(txt); }
-    catch { return { success:false, message:'GAS 回傳非 JSON', raw: txt }; }
-  }catch(e){
-    return { success:false, message:'GAS 連線失敗：'+e.message };
-  }
-}
-
-/* ================= 前端頁：打卡（LIFF 自動送 userId/displayName） ================= */
-const punchHtml = `<!doctype html>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>打卡</title>
-<style>
-  body{ margin:0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Arial;
-        background:#0f172a; color:#e2e8f0; display:flex; align-items:center; justify-content:center; height:100vh;}
-  .card{ background:#111827; border:1px solid #1f2937; border-radius:14px; padding:20px; text-align:center;}
-  .msg{ margin-top:12px; white-space:pre-wrap; }
-</style>
-<div class="card">
-  <h1>打卡</h1>
-  <div id="msg">初始化中…</div>
-</div>
-<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-<script>
-const LIFF_ID = "${LIFF_ID}";
-async function main(){
-  const msg = document.getElementById('msg');
-  const show = (t)=>msg.textContent=t;
-  try{
-    await liff.init({ liffId: LIFF_ID });
-    if(!liff.isLoggedIn()){ liff.login({}); return; }
-
-    const idToken = liff.getDecodedIDToken();
-    const profile = await liff.getProfile();
-    const userId = idToken.sub;
-    const displayName = profile.displayName;
-
-    show("送出打卡中…");
-    const r = await fetch("/punch",{method:"POST",headers:{'content-type':'application/json'},body:JSON.stringify({userId,displayName})});
-    const j = await r.json();
-    show(j.success ? ("✅ "+j.message) : ("❌ "+(j.message||"打卡失敗")));
-  }catch(e){
-    show("❌ 錯誤："+e.message);
-  }
-}
-main();
-</script>`;
+    $('btn').addEventListener('click', punch);
+    // 進頁面就先初始化
+    initLiff().catch(err => show('❌ ' + err.message));
+  </script>
+</body>
+</html>
