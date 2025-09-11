@@ -1,222 +1,232 @@
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>預約系統（含除錯面板）</title>
-  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>預約系統</title>
   <style>
-    body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans TC",Arial;background:#f7f7f7;margin:0}
-    header{padding:10px 14px;background:#111;color:#fff;display:flex;align-items:center;justify-content:space-between}
-    header small{opacity:.8}
-    main{padding:16px;max-width:920px;margin:0 auto}
-    .grid{display:grid;grid-template-columns:1fr;gap:12px}
-    @media(min-width:900px){.grid{grid-template-columns:1.2fr .8fr}}
-    .card{background:#fff;border:1px solid #eee;border-radius:12px;padding:12px}
-    pre{margin:0;background:#fafafa;border:1px solid #eee;border-radius:10px;padding:10px;white-space:pre-wrap;word-break:break-word;max-height:260px;overflow:auto}
-    .row{margin:10px 0}
-    .btn{padding:8px 12px;border:1px solid #ddd;border-radius:10px;background:#fff;margin-right:8px;cursor:pointer}
-    .ok{color:#137333;font-weight:600}
-    .bad{color:#b00020;font-weight:600}
-    .warn{color:#b35a00;font-weight:600}
-    .pill{display:inline-block;background:#eee;border-radius:999px;padding:2px 8px;margin-right:6px}
-    .hidden{display:none}
+    body { font-family: Arial, sans-serif; background:#f7f7f7; padding:2rem; text-align:center; }
+    h1 { font-size:24px; margin-bottom:1.5rem; }
+    .step { display:none; } .active{ display:block; }
+    .options { display:flex; justify-content:center; flex-wrap:wrap; gap:1rem; }
+    .option {
+      position: relative;
+      border:2px solid #999; padding:1rem 2rem; border-radius:20px;
+      cursor:pointer; background:#fff; min-width:96px;
+      transition: transform .08s ease, border-color .08s ease, background .08s ease;
+    }
+    .option:active { transform: scale(0.98); }
+    .option.selected { border-color:#007bff; background:#e0f0ff; }
+    .order-badge {
+      position:absolute; top:-8px; right:-8px;
+      width:28px; height:28px; border-radius:9999px;
+      display:flex; align-items:center; justify-content:center;
+      font-size:14px; font-weight:700; color:#fff; background:#007bff;
+      box-shadow:0 2px 6px rgba(0,0,0,.15);
+      pointer-events:none;
+    }
+    .timeslot { display:inline-block; margin:.5rem; padding:.8rem 1.5rem; border-radius:20px; border:2px solid #ccc; background:#fff; cursor:pointer; }
+    .timeslot.selected { border-color:#28a745; background:#d4edda; }
+    button { margin-top:2rem; padding:.5rem 1rem; font-size:16px; border:0; border-radius:10px; background:#007bff; color:#fff; }
+    button:disabled { background:#999; }
   </style>
 </head>
 <body>
-  <header>
-    <div><b>預約系統</b> <small id="build">BUILD: 2025-09-11T00:00:00</small></div>
-    <div>
-      <button id="btnOpenLiffUrl" class="btn">用 LIFF URL</button>
-      <button id="btnLogin" class="btn">登入</button>
-      <button id="btnLogout" class="btn">登出</button>
-      <button id="btnReload" class="btn">重整</button>
+  <!-- Step 1 -->
+  <div class="step step-1 active">
+    <h1>請選擇預約項目（會依點擊順序標號）</h1>
+    <div class="options">
+      <div class="option" data-value="物理">物理</div>
+      <div class="option" data-value="健身">健身</div>
+      <div class="option" data-value="優氧">優氧</div>
     </div>
-  </header>
+    <button id="nextBtn1" disabled>下一步：選擇日期</button>
+  </div>
 
-  <main class="grid">
-    <section class="card">
-      <h3>除錯狀態</h3>
-      <div class="row">
-        <span class="pill" id="pInClient">inClient: ?</span>
-        <span class="pill" id="pLoggedIn">loggedIn: ?</span>
-        <span class="pill" id="pScopes">scopes: ?</span>
-        <span class="pill" id="pGAS">GAS: 未檢查</span>
-      </div>
-      <div class="row"><b>訊息</b>
-        <pre id="judge">初始化中…</pre>
-      </div>
-      <div class="row"><b>步驟日誌</b>
-        <pre id="log">開始載入頁面…</pre>
-      </div>
-    </section>
+  <!-- Step 2 -->
+  <div class="step step-2">
+    <h1>請選擇日期</h1>
+    <input type="date" id="datePicker" min="">
+    <div>
+      <button id="prevBtn1">返回</button>
+      <button id="nextBtn2" disabled>下一步：選擇時間</button>
+    </div>
+  </div>
 
-    <aside class="card">
-      <h3>環境資訊</h3>
-      <div class="row"><b>目前頁面來源 / 網域</b><pre id="origin">（尚未取得）</pre></div>
-      <div class="row"><b>LIFF 環境</b><pre id="env">（尚未取得）</pre></div>
-      <div class="row"><b>getProfile()</b><pre id="profile">（尚未取得）</pre></div>
-      <div class="row"><b>getDecodedIDToken()</b><pre id="idtoken">（尚未取得）</pre></div>
-      <div class="row"><b>寫入結果</b><pre id="write">（尚未傳送）</pre></div>
-    </aside>
-  </main>
+  <!-- Step 3 -->
+  <div class="step step-3">
+    <h1>請選擇預約時間</h1>
+    <div id="timeslotContainer"></div>
+    <div>
+      <button id="prevBtn2">返回</button>
+      <button id="nextBtn3" disabled>送出預約</button>
+    </div>
+  </div>
 
-<script>
-/* ===== 你要更新的兩個常數 ===== */
-const LIFF_ID = "2007686418-Gy0woWJ2"; // ← 改成你的 LIFF ID
-const GAS_URL = "https://script.google.com/macros/s/AKfycbwXrSaExPwjh3U9-vQFB4FA-xhIDUwUTAzJD0drhbBhki7_Muc5KXnchJVNpYCV0qtEGw/exec"; // ← 改成目前部署成功的 exec
+  <!-- Step 4 -->
+  <div class="step step-4">
+    <h1>預約完成 ✅</h1>
+    <p>您已成功送出預約，請稍候 LINE 通知。</p>
+  </div>
 
-/* ===== 小工具 ===== */
-const $ = (id)=>document.getElementById(id);
-const log = (m)=>{ $('log').textContent += "\n" + m; };
-const setPill = (el, txt, cls)=>{ el.textContent = txt; el.className = 'pill' + (cls?(' '+cls):''); }
-const J = (x)=>JSON.stringify(x, null, 2);
+  <!-- LIFF SDK -->
+  <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+  <script>
+    // ======= 設定 =======
+    const LIFF_ID = '2007686418-Gy0woWJ2';  // ← 換成你的 LIFF ID
+    const GAS_URL = 'https://script.google.com/macros/s/AKfycbwXrSaExPwjh3U9-vQFB4FA-xhIDUwUTAzJD0drhbBhki7_Muc5KXnchJVNpYCV0qtEGw/exec'; // ← 換成你的 GAS exec
 
-/* ===== 全域錯誤攔截（能看到卡住的堆疊） ===== */
-window.onerror = (msg, src, line, col, err)=>{
-  log("❌ onerror: " + msg + " @ " + src + ":" + line + ":" + col + "\n" + (err?.stack||""));
-  $('judge').textContent = "❌ 頁面 JS 錯誤（見步驟日誌）";
-};
-window.onunhandledrejection = (ev)=>{
-  const e = ev?.reason || ev;
-  log("❌ Unhandled Rejection: " + (e?.message || e));
-};
-(function ping(){ log("✅ HTML 已載入 @ " + new Date().toLocaleString()); })();
+    // DOM
+    const step1 = document.querySelector('.step-1');
+    const step2 = document.querySelector('.step-2');
+    const step3 = document.querySelector('.step-3');
+    const step4 = document.querySelector('.step-4');
+    const optionsEls = document.querySelectorAll('.option');
+    const nextBtn1 = document.getElementById('nextBtn1');
+    const nextBtn2 = document.getElementById('nextBtn2');
+    const nextBtn3 = document.getElementById('nextBtn3');
+    const prevBtn1 = document.getElementById('prevBtn1');
+    const prevBtn2 = document.getElementById('prevBtn2');
+    const datePicker = document.getElementById('datePicker');
+    const timeslotContainer = document.getElementById('timeslotContainer');
 
-/* ===== 顯示來源（用來比對 Endpoint 網域） ===== */
-$('origin').textContent = J({
-  href: location.href, origin: location.origin, host: location.host,
-  hostname: location.hostname, protocol: location.protocol
-});
+    // 狀態
+    let selectedOptions = [];
+    let selectedDate = '';
+    let selectedTime = '';
+    let userId = '';
+    let displayName = '';
 
-/* ===== 先測 GAS 是否可達（避免你卡在前端以為是 LIFF 問題） ===== */
-(async function checkGAS(){
-  try{
-    const r = await fetch(GAS_URL + (GAS_URL.includes('?')?'&':'?') + 'ping=1', { method: 'GET', cache: 'no-store' });
-    const t = await r.text().catch(()=> '');
-    if (r.ok && (t.trim()==='OK' || t.trim()==='GAS OK')) {
-      setPill($('pGAS'), 'GAS: OK', 'ok');
-    } else {
-      setPill($('pGAS'), 'GAS: NG('+r.status+')', 'bad');
-      log('⚠️ GAS 回應：' + t);
-    }
-  } catch(e){
-    setPill($('pGAS'), 'GAS: 連線失敗', 'bad');
-    log('❌ GAS 連線錯誤：' + (e?.message||e));
-  }
-})();
+    // ===== 1) LIFF 初始化 + 取得 userId =====
+    (async () => {
+      await liff.init({ liffId: LIFF_ID });
+      if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
+      await liff.ready;
 
-/* ===== LIFF 初始化（含逾時計時器 + 具體判斷） ===== */
-(async function run(){
-  try{
-    log("檢查 window.liff：typeof liff = " + (typeof liff));
-    if (typeof liff === "undefined") {
-      $('judge').textContent = "❌ LIFF SDK 沒載入（網路被擋或 <script src> 寫錯）";
-      return;
-    }
+      try {
+        const prof = await liff.getProfile();            // 需要 scope: profile
+        userId = prof?.userId || '';
+        displayName = prof?.displayName || '';
+      } catch (_) {
+        // 備援：需要 scope: openid
+        const dec = liff.getDecodedIDToken?.();
+        if (dec?.sub) { userId = dec.sub; displayName = dec.name || ''; }
+      }
+    })().catch(() => {
+      alert('LIFF 初始化失敗，請從 LINE 重新開啟或稍後再試。');
+    });
 
-    log("呼叫 liff.init()，liffId=" + LIFF_ID);
-    const initP = liff.init({ liffId: LIFF_ID });
-
-    // 12 秒 watchdog：多半是 Endpoint/網域不匹配
-    const timeout = new Promise((_,rej)=>setTimeout(()=>rej(new Error(
-      "⏳ liff.init() 逾時：\n" +
-      "• 你目前在「" + location.host + "」。\n" +
-      "• 請確認 LINE Developers 的 Endpoint URL 指向這個網域（例：github.io/reserve-system）。\n" +
-      "• 改完記得 Publish；LINE 內建瀏覽器快取重，連結加 ?v=時間戳 重開。"
-    )), 12000));
-
-    await Promise.race([initP, timeout]);
-    await (liff.ready || Promise.resolve());
-
-    const env = {
-      inClient: liff.isInClient(),
-      loggedIn: liff.isLoggedIn(),
-      os: liff.getOS(),
-      lang: liff.getLanguage(),
-      version: liff.getVersion(),
-      lineVersion: (liff.getLineVersion && liff.getLineVersion()) || null
-    };
-    $('env').textContent = J(env);
-    setPill($('pInClient'), 'inClient: '+env.inClient, env.inClient?'ok':'bad');
-    setPill($('pLoggedIn'), 'loggedIn: '+env.loggedIn, env.loggedIn?'ok':'bad');
-
-    // 未登入就導去登入
-    if (!env.loggedIn) {
-      log("未登入 → 觸發 liff.login()");
-      $('judge').textContent = "未登入，準備導向登入…";
-      liff.login({ redirectUri: location.href });
-      return;
+    // ===== 2) 日期限制：今天+7 到 半年內 =====
+    const today = new Date();
+    const minDate = new Date(today); minDate.setDate(minDate.getDate()+7);
+    const maxDate = new Date(today); maxDate.setMonth(maxDate.getMonth()+6);
+    datePicker.min = toDateInput(minDate);
+    datePicker.max = toDateInput(maxDate);
+    function toDateInput(d){
+      const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), dd=String(d.getDate()).padStart(2,'0');
+      return `${y}-${m}-${dd}`;
     }
 
-    // 取得 profile
-    let prof = null, profErr = null;
-    try {
-      log("呼叫 liff.getProfile()…");
-      prof = await liff.getProfile(); // 需要 scope: profile
-      $('profile').textContent = J(prof);
-    } catch (e) {
-      profErr = String(e?.message || e);
-      $('profile').textContent = "（失敗）\n" + profErr;
-      log("getProfile() 失敗：" + profErr);
+    // ===== 3) 項目順序徽章 =====
+    function ensureBadge(el){
+      let b = el.querySelector('.order-badge');
+      if (!b) { b = document.createElement('div'); b.className = 'order-badge'; el.appendChild(b); }
+      return b;
     }
-
-    // 取得 decoded token（需要 openid）
-    let dec = null;
-    try { dec = liff.getDecodedIDToken?.(); } catch(_){}
-    $('idtoken').textContent = dec ? J(dec) : "（沒有 decoded ID token，可能沒勾 openid）";
-
-    // 判斷 scope 狀態
-    const scopeMsgs = [];
-    if (prof && prof.userId) scopeMsgs.push('profile: OK');
-    else scopeMsgs.push('profile: NG');
-    if (dec && dec.sub) scopeMsgs.push('openid: OK');
-    else scopeMsgs.push('openid: NG');
-    setPill($('pScopes'), 'scopes: ' + scopeMsgs.join(', '), (scopeMsgs.includes('NG')?'warn':'ok'));
-
-    // 最終判斷 & 提示
-    const msgs = [];
-    if (!env.inClient) msgs.push("❌ 不在 LINE App 內（請從 LIFF 連結開啟）");
-    if (prof && prof.userId) msgs.push("✅ getProfile() 取得 userId：" + prof.userId);
-    if (dec && dec.sub) msgs.push("✅ decoded ID token（sub）也有 userId：" + dec.sub);
-    if (!prof && !dec) msgs.push("❌ 兩者皆無 → 多半是 scope 未勾 profile/openid 或 Endpoint 未 Publish。");
-    $('judge').textContent = msgs.join("\n") || "環境正常";
-
-    // （可選）把 userId 寫進表
-    const userId = (prof && prof.userId) || (dec && dec.sub) || '';
-    if (!userId) return;
-    try{
-      const res = await fetch(GAS_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ userId, ts: new Date().toISOString() }),
-        cache: 'no-store'
+    function renderOptionBadges(){
+      optionsEls.forEach(el=>{
+        const val = el.dataset.value;
+        const idx = selectedOptions.indexOf(val);
+        if (idx >= 0) {
+          el.classList.add('selected');
+          const badge = ensureBadge(el);
+          badge.textContent = (idx + 1);
+          badge.style.display = 'flex';
+        } else {
+          el.classList.remove('selected');
+          const badge = el.querySelector('.order-badge');
+          if (badge) badge.style.display = 'none';
+        }
       });
-      const data = await res.json().catch(()=> ({}));
-      if (res.ok && data.ok) { $('write').textContent = "✅ 已成功寫入試算表"; $('write').className="ok"; }
-      else { $('write').textContent = "❌ 寫入失敗：" + (data.error || ('HTTP '+res.status)); $('write').className="bad"; }
-    }catch(e){
-      $('write').textContent = "❌ 寫入失敗（fetch 例外）：" + (e?.message || e); $('write').className="bad";
+      nextBtn1.disabled = selectedOptions.length === 0;
+    }
+    optionsEls.forEach(el=>{
+      el.addEventListener('click', ()=>{
+        const v = el.dataset.value;
+        const i = selectedOptions.indexOf(v);
+        if (i >= 0) selectedOptions.splice(i, 1);
+        else selectedOptions.push(v);
+        renderOptionBadges();
+      });
+    });
+
+    // ===== 4) 導頁 =====
+    nextBtn1.onclick = ()=>{ step1.classList.remove('active'); step2.classList.add('active'); };
+    prevBtn1.onclick = ()=>{ step2.classList.remove('active'); step1.classList.add('active'); };
+    datePicker.onchange = ()=>{ nextBtn2.disabled = !datePicker.value; };
+
+    nextBtn2.onclick = ()=>{
+      selectedDate = datePicker.value; // yyyy-mm-dd
+      step2.classList.remove('active'); step3.classList.add('active');
+      renderTimes();
+    };
+    prevBtn2.onclick = ()=>{ step3.classList.remove('active'); step2.classList.add('active'); };
+
+    // ===== 5) 產生時段（9–12、14–22） =====
+    function renderTimes(){
+      timeslotContainer.innerHTML = '';
+      const ranges = [[9,12],[14,22]];
+      ranges.forEach(([s,e])=>{
+        for(let h=s; h<e; h++){
+          const t = `${String(h).padStart(2,'0')}:00~${String(h+1).padStart(2,'0')}:00`;
+          const div = document.createElement('div');
+          div.className = 'timeslot';
+          div.textContent = t;
+          div.onclick = ()=>{
+            document.querySelectorAll('.timeslot').forEach(el=>el.classList.remove('selected'));
+            div.classList.add('selected');
+            selectedTime = t;
+            nextBtn3.disabled = false;
+          };
+          timeslotContainer.appendChild(div);
+        }
+      });
     }
 
-  } catch (err) {
-    log("初始化期間發生錯誤：" + (err?.stack || String(err)));
-    $('judge').textContent = "❌ liff.init 失敗/逾時（見步驟日誌）。\n" +
-      "最常見：Endpoint 與此頁網域不一致、或後台改完未 Publish、或使用舊卡片/快取。";
-  }
-})();
+    // ===== 6) 送出預約（simple request，避免 CORS 預檢） =====
+    nextBtn3.onclick = async ()=>{
+      if (!selectedDate || !selectedTime || selectedOptions.length===0) {
+        alert('請先選好項目、日期、時間'); return;
+      }
+      if (!userId) { alert('尚未取得使用者資料，請重整或從 LINE 重新開啟。'); return; }
+      nextBtn3.disabled = true;
 
-/* ===== 快捷按鈕 ===== */
-$('btnOpenLiffUrl').onclick = ()=> location.href = "https://liff.line.me/" + LIFF_ID + "?v=" + Date.now();
-$('btnLogin').onclick = ()=> liff.login({ redirectUri: location.href });
-$('btnLogout').onclick = ()=> { liff.logout(); location.reload(); };
-$('btnReload').onclick = ()=> location.reload();
+      const payload = {
+        userId, displayName,
+        date: selectedDate,                // yyyy-mm-dd
+        timeSlots: [selectedTime],
+        services: selectedOptions
+      };
 
-/* ===== 顯示目前 build 時間，方便判斷是否載到最新版 ===== */
-(function setBuild(){
-  const now = new Date().toISOString();
-  $('build').textContent = 'BUILD: ' + now;
-})();
-</script>
+      try{
+        const res = await fetch(GAS_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // ✅ simple request
+          body: JSON.stringify(payload),
+          cache: 'no-store'
+        });
+        const data = await res.json().catch(()=> ({}));
+        if (res.ok && data.ok){
+          step3.classList.remove('active'); step4.classList.add('active');
+        } else {
+          alert('送出失敗：' + (data.error || data.message || ('HTTP '+res.status)));
+          nextBtn3.disabled = false;
+        }
+      }catch(err){
+        alert('送出失敗：' + (err?.message || err));
+        nextBtn3.disabled = false;
+      }
+    };
+  </script>
 </body>
 </html>
