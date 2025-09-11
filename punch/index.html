@@ -30,7 +30,7 @@
   </div>
 
 <script>
-/* ===== 你的環境參數（依你先前設定） ===== */
+/* ===== 你的環境參數 ===== */
 const GAS_GET_ENDPOINT  = 'https://script.google.com/macros/s/AKfycbxvmm0Qpko3wwM7gjuP7H-5rSbeYwAZNjGWXseiVdQk3xaopKhoL7wwi78AA7TMV0xq-w/exec';
 const GAS_POST_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxvmm0Qpko3wwM7gjuP7H-5rSbeYwAZNjGWXseiVdQk3xaopKhoL7wwi78AA7TMV0xq-w/exec';
 const LIFF_ID = '2007686418-OvlBgmQW';
@@ -82,70 +82,71 @@ async function api(action, body = {}) {
   return apiGet({ action, ...body });   // 讀取
 }
 
-/* ===== 主流程 ===== */
-async function autoFlow() {
-  try {
-    // 1) 取得註冊狀態
-    setStatus('檢查註冊狀態…');
-    const ck = await api('checkStaff', { userId: profile.userId });
-    const exists = !!ck.exists;
-    savedCredentialId = ck.staff?.credentialId || null;
-
-    $('actions').style.display = '';
-    $('user').innerHTML = `<b>${profile.displayName || '（無暱稱）'}</b> <span class="muted">(${profile.userId})</span>`;
-
-    // 2) 已註冊 → 直接驗證打卡；未註冊 → 自動註冊後打卡
-    if (!exists || !savedCredentialId) {
-      $('flow').textContent = '尚未註冊，正在進行一次性的裝置生物辨識註冊…';
-      await registerFlow(true); // silent = true（成功後自動打卡）
-    } else {
-      $('flow').textContent = '正在進行臉部/指紋驗證…';
-      await authAndPunchFlow(true); // silent = true
-    }
-
-    setStatus('<span class="ok">完成</span>');
-  } catch (e) {
-    setStatus('<span class="err">流程失敗</span>');
-    $('flow').innerHTML = `<span class="err">${e.message || e}</span>`;
-    $('retry').style.display = 'inline-block';
-  }
+/* ===== 主流程（自動＋手勢備援） ===== */
+async function ensureProfile() {
+  let p = null;
+  try { p = await liff.getProfile(); } catch (_) {}
+  if (p && p.userId) return { userId: p.userId, displayName: p.displayName || '' };
+  const idt = liff.getDecodedIDToken?.();
+  if (idt?.sub) return { userId: idt.sub, displayName: '' };
+  throw new Error('無法取得使用者資料');
 }
 
-/* ===== 初始化（自動啟動） ===== */
+async function autoFlow() {
+  // 1) 檢查註冊
+  setStatus('檢查註冊狀態…');
+  const ck = await api('checkStaff', { userId: profile.userId });
+  const exists = !!ck.exists;
+  savedCredentialId = ck.staff?.credentialId || null;
+
+  $('actions').style.display = '';
+  $('user').innerHTML = `<b>${profile.displayName || '（無暱稱）'}</b> <span class="muted">(${profile.userId})</span>`;
+
+  // 2) 未註冊：先註冊再打卡；已註冊：直接打卡
+  if (!exists || !savedCredentialId) {
+    $('flow').textContent = '尚未註冊，正在註冊裝置生物辨識…';
+    await registerFlow(true); // silent=true（成功後自動接打卡）
+  } else {
+    $('flow').textContent = '正在臉部/指紋驗證…';
+    await authAndPunchFlow(true); // silent=true
+  }
+
+  setStatus('<span class="ok">完成</span>');
+}
+
+/* ===== 初始化（自動啟動；失敗時顯示重試與手動按鈕） ===== */
 (async function init() {
   try {
     setStatus('初始化 LIFF…');
-
-    // 頂層導轉，避免被外層 webview 框住
     if (window.top !== window.self) { try { window.top.location = window.location.href; } catch(_){} }
 
     await liff.init({ liffId: LIFF_ID, withLoginOnExternalBrowser: true });
-
     if (!liff.isLoggedIn()) {
-      // 使用 LIFF 深連結，避免 redirectUri 細節踩雷
       liff.login({ redirectUri: `https://liff.line.me/${LIFF_ID}` });
       return;
     }
 
-    // 取得使用者資料（getProfile → ID Token 備援）
-    let p = null;
-    try { p = await liff.getProfile(); } catch (_e) {}
-    if (p && p.userId) profile = { userId: p.userId, displayName: p.displayName || '' };
-    else {
-      const idt = liff.getDecodedIDToken?.();
-      if (idt?.sub) profile = { userId: idt.sub, displayName: '' };
-      else throw new Error('無法取得使用者資料');
-    }
+    profile = await ensureProfile();
 
-    // 自動開始整個流程（加一個短暫延遲，讓 WebView 就緒）
-    setTimeout(autoFlow, 150);
-    $('retry').onclick = () => { $('retry').style.display='none'; autoFlow(); };
-
-    setStatus('<span class="ok">準備就緒</span>');
+    // 自動開始（部分裝置若要求使用者手勢，會在 autoFlow 裡被捕捉並退回手動）
+    await autoFlow();
   } catch (e) {
-    setStatus('<span class="err">初始化失敗</span>');
-    $('retry').style.display = 'inline-block';
-    $('retry').onclick = () => location.reload();
+    // 顯示可操作的按鈕（提供使用者手勢）
+    setStatus('<span class="err">流程失敗</span>');
+    $('actions').style.display = '';
+    const btn = document.createElement('button');
+    btn.textContent = '按一下進行臉部驗證打卡';
+    btn.style.marginTop = '8px';
+    btn.onclick = async () => {
+      btn.disabled = true;
+      btn.textContent = '處理中…';
+      try { await autoFlow(); } catch (err) {
+        $('flow').innerHTML = `<span class="err">${err.message || err}</span>`;
+        btn.disabled = false; btn.textContent = '再試一次';
+      }
+    };
+    $('flow').innerHTML = '需要您的按一下來啟動驗證。';
+    $('flow').appendChild(btn);
   }
 })();
 
@@ -153,6 +154,7 @@ async function autoFlow() {
 async function registerFlow(silent=false){
   try{
     if (!window.PublicKeyCredential) throw new Error('此裝置/瀏覽器不支援 WebAuthn');
+
     const cred = await navigator.credentials.create({
       publicKey: {
         rp: { name: 'Punch System' },
@@ -171,9 +173,9 @@ async function registerFlow(silent=false){
 
     savedCredentialId = credentialId;
     if (!silent) $('flow').innerHTML = '<span class="ok">註冊成功！</span> 正在驗證打卡…';
-    // 註冊完成立即打卡
     await authAndPunchFlow(true);
   }catch(e){
+    // 若因為需要使用者手勢而失敗，就把錯誤拋回去給 init() 顯示按鈕
     if (!silent) $('flow').innerHTML = `<span class="err">註冊失敗：</span> ${e.message || e}`;
     throw e;
   }
@@ -183,10 +185,11 @@ async function registerFlow(silent=false){
 async function authAndPunchFlow(silent=false){
   try{
     if (!window.PublicKeyCredential) throw new Error('此裝置/瀏覽器不支援 WebAuthn');
+
     const allow = savedCredentialId ? [{ type:'public-key', id:b64uToBuf(savedCredentialId) }] : [];
     const assertion = await navigator.credentials.get({
       publicKey: { challenge: crypto.getRandomValues(new Uint8Array(32)), allowCredentials: allow, userVerification:'required', timeout:60000 },
-      mediation: 'required' // 優先喚起平台驗證（不需使用者點擊）
+      mediation: 'required' // 盡量自動；若環境不允許會丟錯，被外層接住
     });
     if (!assertion) throw new Error('驗證取消');
 
@@ -194,10 +197,10 @@ async function authAndPunchFlow(silent=false){
     const punched = await api('punch', { userId: profile.userId, displayName: profile.displayName, credentialId: usedCredId });
     if (!punched.ok) throw new Error(punched.reason || punched.error || '打卡失敗');
 
-    const msg = `<span class="ok">打卡成功</span>（${punched.type}）於 ${punched.time}，當日第 ${punched.count} 次。`;
-    $('flow').innerHTML = msg;
+    $('flow').innerHTML = `<span class="ok">打卡成功</span>（${punched.type}）於 ${punched.time}，當日第 ${punched.count} 次。`;
   }catch(e){
     if (!silent) $('flow').innerHTML = `<span class="err">驗證或打卡失敗：</span> ${e.message || e}`;
+    // 把錯誤往外丟，讓 init() 展示「按一下啟動」按鈕（提供 user gesture）
     throw e;
   }
 }
