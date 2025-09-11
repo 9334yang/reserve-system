@@ -53,10 +53,14 @@
 
 <script>
 /* ===== 你的環境參數 ===== */
-const GAS_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxvmm0Qpko3wwM7gjuP7H-5rSbeYwAZNjGWXseiVdQk3xaopKhoL7wwi78AA7TMV0xq-w/exec';
+// GET：讀取用端點（先用 /exec；若你有 googleusercontent.com 的 echo 端點，貼到這裡會更穩）
+const GAS_GET_ENDPOINT  = 'https://script.google.com/macros/s/AKfycbxvmm0Qpko3wwM7gjuP7H-5rSbeYwAZNjGWXseiVdQk3xaopKhoL7wwi78AA7TMV0xq-w/exec';
+// POST：寫入用端點（/exec）
+const GAS_POST_ENDPOINT = 'https://script.google.com/macros/s/AKfycbxvmm0Qpko3wwM7gjuP7H-5rSbeYwAZNjGWXseiVdQk3xaopKhoL7wwi78AA7TMV0xq-w/exec';
+
 const LIFF_ID      = '2007686418-OvlBgmQW';
 const EXPECT_HOST  = '9334yang.github.io';
-const EXPECT_PATH  = '/reserve-system/punch/'; // 你設定在 LIFF Endpoint URL 的路徑（務必含尾斜線）
+const EXPECT_PATH  = '/reserve-system/punch/'; // 務必含尾斜線
 
 /* ===== 快速 DOM 工具 ===== */
 const $ = id => document.getElementById(id);
@@ -71,18 +75,36 @@ let profile=null, staffExists=false, savedCredentialId=null;
 const b64uToBuf=(b64u)=>{const pad='='.repeat((4-b64u.length%4)%4);const b64=(b64u.replace(/-/g,'+').replace(/_/g,'/'))+pad;const str=atob(b64);const buf=new ArrayBuffer(str.length);const view=new Uint8Array(buf);for(let i=0;i<str.length;i++) view[i]=str.charCodeAt(i);return buf;};
 const bufToB64u=(buf)=>{const bytes=(buf instanceof ArrayBuffer)?new Uint8Array(buf):new Uint8Array(buf.buffer);let s='';for(let i=0;i<bytes.byteLength;i++) s+=String.fromCharCode(bytes[i]);return btoa(s).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');};
 
-async function api(action, body){
-  const res = await fetch(GAS_ENDPOINT, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action, ...body }) });
-  return res.json();
+/* ===== API 包裝：讀取走 GET，寫入走 POST ===== */
+async function apiGet(params) {
+  const url = new URL(GAS_GET_ENDPOINT);
+  Object.entries(params || {}).forEach(([k,v]) => url.searchParams.set(k, String(v ?? '')));
+  const res = await fetch(url.toString(), { method: 'GET' });
+  const text = await res.text();
+  try { return JSON.parse(text); } catch { return { ok:false, error:'INVALID_JSON', raw:text, status:res.status }; }
+}
+async function apiPost(action, body) {
+  const res = await fetch(GAS_POST_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json' },
+    body: JSON.stringify({ action, ...body })
+  });
+  const text = await res.text();
+  try { return JSON.parse(text); } catch { return { ok:false, error:'INVALID_JSON', raw:text, status:res.status }; }
+}
+async function api(action, body = {}) {
+  if (action === 'saveRegistration' || action === 'punch') {
+    return apiPost(action, body);       // 寫入
+  }
+  return apiGet({ action, ...body });   // 讀取
 }
 
-/* ===== 全域錯誤攔截（也會寫進 log） ===== */
+/* ===== 全域錯誤攔截 ===== */
 window.addEventListener('error', e => log('window.error', e.message, e.filename, e.lineno));
 window.addEventListener('unhandledrejection', e => log('unhandledrejection', e.reason?.message || String(e.reason)));
 
 /* ===== 入口 ===== */
 (async function init(){
-  const debug = new URL(location.href).searchParams.get('debug') === '1';
   try {
     // S0：環境
     const env = {
@@ -123,8 +145,7 @@ window.addEventListener('unhandledrejection', e => log('unhandledrejection', e.r
     if (!liff.isLoggedIn()) {
       $('s2').innerHTML += `<div class="muted">尚未登入 → 轉導登入（redirect 使用 LIFF 深連結）</div>`;
       stepOk('s2');
-      // 注意：呼叫後會跳轉，這裡 return 避免往下執行
-      liff.login({ redirectUri: `https://liff.line.me/${LIFF_ID}` });
+      liff.login({ redirectUri: `https://liff.line.me/${LIFF_ID}` }); // return 由跳轉接手
       return;
     } else {
       $('s2').innerHTML += `<div class="muted">已登入</div>`;
@@ -155,18 +176,21 @@ window.addEventListener('unhandledrejection', e => log('unhandledrejection', e.r
     $('user').innerHTML = `<b>${profile.displayName || '（無暱稱）'}</b> <span class="muted mono">(${profile.userId})</span>`;
     $('actions').style.display = '';
 
-    // S4：測試 GAS 連線（CORS／URL 正不正）
+    // S4：測試 GAS 連線（GET ping，避免預檢）
     try {
-      const ping = await fetch(GAS_ENDPOINT, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ action:'ping' }) });
-      $('s4').innerHTML += `<div class="muted">status=${ping.status} ok=${ping.ok}</div>`;
+      const pingRes  = await fetch(`${GAS_GET_ENDPOINT}?action=ping&ts=${Date.now()}`, { method:'GET' });
+      const pingText = await pingRes.text();
+      $('s4').innerHTML += `<div class="muted">status=${pingRes.status} ok=${pingRes.ok}</div>`;
+      log('GAS ping body', pingText);
+      if (!pingRes.ok) throw new Error('Ping HTTP ' + pingRes.status);
       stepOk('s4');
     } catch (e) {
       stepErr('s4', e?.message || e);
-      log('GAS ping error', e);
-      // 不中斷，繼續往下
+      log('GAS ping error detail', e);
+      // 不中斷，繼續往下（有些環境會擋 ping，但不一定擋 checkStaff）
     }
 
-    // S5：檢查是否註冊
+    // S5：檢查是否註冊（GET）
     try {
       const ck = await api('checkStaff', { userId: profile.userId });
       log('checkStaff', ck);
