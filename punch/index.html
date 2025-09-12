@@ -7,22 +7,22 @@
   <script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
   <style>
     body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans TC",Arial;padding:20px;line-height:1.6}
-    .card{border:1px solid #eee;border-radius:16px;padding:20px;box-shadow:0 2px 10px rgba(0,0,0,.04)}
+    .card{border:1px solid #eee;border-radius:16px;padding:20px;box-shadow:0 2px 10px rgba(0,0,0,.04);max-width:560px;margin:0 auto}
     .ok{color:#0a7f3f}
     .err{color:#b00020}
-    .hint{font-size:14px;color:#666}
+    .hint{font-size:14px;color:#666;word-break:break-all}
   </style>
 </head>
 <body>
-  <div class="card" id="box">
+  <div class="card">
     <div id="status">初始化中…</div>
     <div class="hint" id="hint"></div>
   </div>
 
 <script>
-const LIFF_ID = '2007686418-OvlBgmQW';                 // 你的 LIFF ID（替換）
-const GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbwZQzh82bqxLgNO-SZW6OXphrR0JQEQF6LAVTDi29fgIZhG8kJy4e8PShx0I3j847Tu8Q/exec'; // 你的 GAS Web App URL（替換）
-const AUTO_CLOSE_MS = 1500; // 成功後自動關閉延遲（毫秒）
+const LIFF_ID = '2007686418-OvlBgmQW'; // 你的 LIFF ID
+const GAS_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbxHBXwNP4lN7OqJpbTjXdo7HgumdH3zJ-TJXaM5793gcDAFsHYQ7uTd1RvQwm4B0fJDGg/exec'; // 你的 GAS Web App URL
+const AUTO_CLOSE_MS = 10000; // 成功後自動關閉（10 秒）
 
 (async () => {
   const $ = (id)=>document.getElementById(id);
@@ -31,28 +31,24 @@ const AUTO_CLOSE_MS = 1500; // 成功後自動關閉延遲（毫秒）
     $('status').textContent = '啟動 LIFF…';
     await liff.init({ liffId: LIFF_ID });
 
-    // 若不在 LINE 內，提示用 LINE 開啟
     if (!liff.isInClient()) {
-      const deepLink = `line://app/${LIFF_ID}`; // 可加 query: ?t=...
+      const deepLink = `line://app/${LIFF_ID}${location.search || ''}`;
       $('status').innerHTML = '<span class="err">請於 LINE 內開啟此頁</span>';
-      $('hint').innerHTML = `請點此以 LINE 開啟：<a href="${deepLink}">${deepLink}</a>`;
+      $('hint').innerHTML = `若你看到此畫面，代表目前不在 LINE 內建瀏覽器。請點此以 LINE 開啟：<a href="${deepLink}">${deepLink}</a>`;
       return;
     }
 
-    // 取得使用者資料
     $('status').textContent = '讀取使用者資料…';
     const profile = await liff.getProfile();
     const context = liff.getContext();
     const userId = (profile && profile.userId) || (context && context.userId);
     const displayName = profile ? profile.displayName : '';
-    if (!userId) throw new Error('尚未取得 userId');
+    if (!userId) throw new Error('尚未取得 userId（請檢查 LIFF 權限與是否在 LINE 內）');
 
-    // 組裝 payload
     const payload = {
       userId,
       displayName,
       siteId: q.get('site') || '',
-      t: Date.now(),
       device: navigator.userAgent
     };
 
@@ -62,19 +58,20 @@ const AUTO_CLOSE_MS = 1500; // 成功後自動關閉延遲（毫秒）
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     });
-
     const data = await res.json();
-    if (!res.ok || !data.ok) throw new Error(data.message || `HTTP ${res.status}`);
+
+    if (!data.ok) {
+      throw new Error(data.message || '打卡失敗');
+    }
 
     const verb = data.action === 'clock_out' ? '下班' : '上班';
     $('status').innerHTML = `<div class="ok">✅ ${verb}打卡成功</div><div class="hint">日期：${data.ymd}　時間：${data.time}</div>`;
 
-    // 短暫顯示後自動關閉
     setTimeout(() => { try { liff.closeWindow(); } catch(e) {} }, AUTO_CLOSE_MS);
 
   } catch (err) {
     $('status').innerHTML = `<span class="err">❌ ${err.message || err}</span>`;
-    $('hint').textContent = '請截圖此畫面回報。若非在 LINE 內，請改用 LINE 內建瀏覽器開啟。';
+    $('hint').textContent = '請截圖此畫面回報。若不是在 LINE 內開啟，請改用 LINE 內建瀏覽器。';
   }
 })();
 </script>
